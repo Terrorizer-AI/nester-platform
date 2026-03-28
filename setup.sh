@@ -121,12 +121,16 @@ step "Checking system dependencies"
 
 # macOS only — check for Homebrew
 if [[ "$(uname)" == "Darwin" ]]; then
+    # Ensure Homebrew PATH is loaded (needed for python3.13, node, etc.)
+    if [ -f /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    fi
+
     if command -v brew &>/dev/null; then
         ok "Homebrew installed"
     else
         info "Installing Homebrew (macOS package manager)..."
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        # Add brew to PATH for this session
         if [ -f /opt/homebrew/bin/brew ]; then
             eval "$(/opt/homebrew/bin/brew shellenv)"
         fi

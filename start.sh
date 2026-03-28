@@ -23,6 +23,11 @@ info() { echo -e "  ${DIM}→${NC} $1"; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Ensure Homebrew PATH is loaded (macOS)
+if [ -f /opt/homebrew/bin/brew ]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+fi
+
 echo ""
 echo -e "${BOLD}${CYAN}  Nester Agent Platform — Starting...${NC}"
 echo ""
