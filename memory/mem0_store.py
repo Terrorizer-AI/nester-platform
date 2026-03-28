@@ -34,7 +34,7 @@ def _ensure_dirs(data_dir: str) -> Path:
 
 def init_mem0(
     data_dir: str = "~/.nester/mem0",
-    llm_model: str = "gpt-4.1-nano-2025-04-14",
+    llm_model: str = "gpt-4o-mini",
     embedding_model: str = "text-embedding-3-small",
 ) -> Any:
     """

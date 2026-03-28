@@ -65,7 +65,7 @@ export default function Dashboard() {
         />
         <MetricCard label="Active Flows" value={flows.length} sub="Deployed" />
         <MetricCard label="Total Agents" value={11} sub="6 sales + 5 github" />
-        <MetricCard label="Models" value={2} sub="gpt-4o-mini + gpt-5.4-nano" />
+        <MetricCard label="Models" value={2} sub="gpt-4o-mini + gpt-4o" />
       </div>
 
       <h2 className="text-lg font-semibold mb-4">Flows</h2>

@@ -20,8 +20,8 @@ class Settings(BaseSettings):
 
     # ── LLM Providers ────────────────────────────────────────────────────────
     openai_api_key: str = Field("", env="OPENAI_API_KEY")
-    openai_research_model: str = Field("gpt-5.4-nano", env="OPENAI_RESEARCH_MODEL")
-    openai_synthesis_model: str = Field("gpt-5.4-nano", env="OPENAI_SYNTHESIS_MODEL")
+    openai_research_model: str = Field("gpt-4o-mini", env="OPENAI_RESEARCH_MODEL")
+    openai_synthesis_model: str = Field("gpt-4o-mini", env="OPENAI_SYNTHESIS_MODEL")
     # Best-quality model for email composition — uses full research context
     openai_email_model: str = Field("gpt-4o", env="OPENAI_EMAIL_MODEL")
 
@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     nester_data_dir: str = Field("~/.nester", env="NESTER_DATA_DIR")
 
     # ── Mem0 (agent memory) ───────────────────────────────────────────────────
-    mem0_llm_model: str = Field("gpt-4.1-nano-2025-04-14", env="MEM0_LLM_MODEL")
+    mem0_llm_model: str = Field("gpt-4o-mini", env="MEM0_LLM_MODEL")
     mem0_embedding_model: str = Field("text-embedding-3-small", env="MEM0_EMBEDDING_MODEL")
 
     # ── Langfuse ─────────────────────────────────────────────────────────────
