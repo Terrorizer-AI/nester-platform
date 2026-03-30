@@ -101,7 +101,14 @@ def get_mem0() -> Any:
 
 
 def is_mem0_ready() -> bool:
-    """Return True if Mem0 is initialized and accessible."""
+    """Return True if Mem0 is initialized and accessible.
+
+    Currently disabled — all store/recall operations will be skipped.
+    Set MEM0_ENABLED=true in .env to re-enable.
+    """
+    import os
+    if os.getenv("MEM0_ENABLED", "false").lower() not in ("true", "1", "yes"):
+        return False
     return _initialized and _mem0_client is not None
 
 

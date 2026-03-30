@@ -281,6 +281,9 @@ if [ ! -f .env ]; then
 
 # --- LLM Provider ---
 OPENAI_API_KEY=your_openai_key
+OPENAI_RESEARCH_MODEL=gpt-4o
+OPENAI_SYNTHESIS_MODEL=gpt-4o
+OPENAI_EMAIL_MODEL=gpt-4o
 
 # --- Web Scraping ---
 FIRECRAWL_API_KEY=your_firecrawl_key

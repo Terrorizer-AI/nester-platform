@@ -46,7 +46,7 @@ def _build_registry() -> dict[str, ModelConfig]:
         ROLE_EMAIL: ModelConfig(
             model_id=settings.openai_email_model,
             temperature=0.8,
-            max_tokens=4096,
+            max_tokens=8192,
             description="Hyper-personalized email writing using full research context",
         ),
     }

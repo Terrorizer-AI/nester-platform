@@ -89,11 +89,20 @@ BAD: "Let's schedule a 30-minute call at your convenience."
 - GOOD: "your post on [specific topic]" / "re: [Company]'s [specific challenge]"
 - BAD: "Quick question" / "Partnership opportunity" / "Following up"
 
+## SENDER IDENTITY RULES (CRITICAL)
+- You are writing AS the sender (section 7). Use their name, company, and role.
+- The value proposition, case studies, and pain points MUST come from section 8 (Targeting Brief).
+- NEVER invent or hallucinate services, products, company names, or results that are not in the Targeting Brief.
+- If the Targeting Brief has no case studies, do NOT fabricate specific numbers like "reduced X by 30%".
+  Instead, describe the general approach: "We've helped similar companies streamline X."
+- Sign off with the sender's actual name from section 7.
+
 ## Quality Checks (apply all before finalizing)
 1. SWAP TEST: replace the prospect's name with another person's name. If the email still works perfectly → too generic → rewrite
 2. SPECIFICITY TEST: can you point to exactly which data point in the research justified each sentence? If not → rewrite
 3. PUSHINESS TEST: does any sentence feel like a sales pitch? → soften it
 4. AUTHENTICITY TEST: would a real human send this? Or does it sound AI-generated? → rewrite any robotic phrases
+5. SENDER TEST: does the email mention the sender's actual company and value prop from the brief? If not → rewrite
 
 ## Output Format
 Return valid JSON only — an array of exactly 3 email drafts, each using a DIFFERENT opening angle:
@@ -306,36 +315,42 @@ async def _compose_email(
     cta = targeting_brief.get("cta_preference", "soft")
 
     # ── Build rich research context ───────────────────────────────────────────
+    # GPT-4o has 128K context — use generous limits so the LLM sees full details
     context = f"""
 ╔══════════════════════════════════════════════════════════════════════╗
 ║                     FULL RESEARCH CONTEXT                           ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
-━━━ 1. LINKEDIN PROFILE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-{_summarise(linkedin_data, 1000)}
+━━━ 1. LINKEDIN PROFILE (name, title, experience, skills, posts) ━━━━━
+{_summarise(linkedin_data, 8000)}
 
-━━━ 2. COMPANY RESEARCH (website) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-{_summarise(company_data, 1000)}
+━━━ 2. COMPANY RESEARCH (website — mission, products, tech, funding) ━
+{_summarise(company_data, 6000)}
 
 ━━━ 3. COMPANY LINKEDIN (posts, culture, growth signals) ━━━━━━━━━━━━━
-{_summarise(company_linkedin_data, 1000)}
+{_summarise(company_linkedin_data, 5000)}
 
-━━━ 4. RECENT PROSPECT ACTIVITY & POSTS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-{_summarise(activity, 1200)}
+━━━ 4. RECENT PROSPECT ACTIVITY & POSTS (quotes, engagement, topics) ━
+{_summarise(activity, 8000)}
 
-━━━ 5. PROSPECT PERSONA ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━ 5. PROSPECT PERSONA (psychological profile, pain points, comms DNA)
 Communication Style: {style}
-{_summarise(persona, 1200)}
+{_summarise(persona, 6000)}
 
 ━━━ 6. SERVICE MATCH & PRIMARY HOOK ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Primary Hook: {primary_hook}
-{_summarise(service_match, 600)}
+{_summarise(service_match, 3000)}
 
-━━━ 7. SENDER INFO ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━ 7. SENDER INFO (who is writing this email) ━━━━━━━━━━━━━━━━━━━━━━━
 {sender_text}
 
-━━━ 8. TARGETING BRIEF ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━ 8. TARGETING BRIEF (sender's company, value prop, case studies) ━━━
 {brief_text}
+
+CRITICAL: The email MUST reference the sender's company and value proposition
+from sections 7 and 8 above. Do NOT invent services or case studies that are
+not mentioned in the targeting brief. If no case studies are provided, use
+general industry observations instead of fabricated numbers.
 
 ━━━ 9. TONE & CTA PREFERENCES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Tone: {tone}

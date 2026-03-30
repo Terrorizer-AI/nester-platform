@@ -84,8 +84,23 @@ Build the persona with ALL of these sections:
    - Groups and influencers they follow (signals interests)
    - Their influence level: thought leader, active participant, lurker?
 
-Return structured JSON with ALL 8 sections. Each section must have specific evidence, not vague generalizations.
-Include a "persona_confidence" field (0.0-1.0) and a "data_gaps" array listing what's missing."""
+Return ONLY a valid JSON object with ALL 8 sections — no markdown, no explanation, no code fences.
+Each section must have specific evidence, not vague generalizations.
+Include a "persona_confidence" field (0.0-1.0) and a "data_gaps" array listing what's missing.
+
+Use this exact top-level structure:
+{
+  "identity_snapshot": { "name": "", "title": "", "company": "", "seniority": "", "decision_making_authority": "", "years_in_current_role": "", "total_career_experience": "", "career_trajectory": "" },
+  "professional_narrative": { "career_story": "", "key_career_transitions": "", "skills_expertise": "", "notable_achievements": "" },
+  "company_context": { "company_name": "", "size": "", "industry": "", "stage": "", "recent_news": "", "role_in_org": "", "visible_challenges": "" },
+  "psychological_profile": { "motivations": [{"motivation": "", "evidence": "", "confidence": ""}], "risk_tolerance": {"assessment": "", "evidence": ""}, "values": [""], "decision_style": {"style": "", "evidence": ""} },
+  "pain_points": [{ "description": "", "evidence_source": "", "confidence": "", "solution_connection": "" }],
+  "communication_dna": { "writing_style": {"style": "", "examples": ""}, "emoji_usage": "", "post_length": {"preference": "", "evidence": ""}, "engagement_topics": [], "tone": "", "best_channel": "" },
+  "engagement_strategy": { "opening_angle": "", "topics_to_avoid": [{"topic": "", "reason": "", "confidence": ""}], "ideal_timing": "", "recommended_approach": {"approach": "", "reasoning": ""}, "specific_reference": "" },
+  "network_influence": { "connection_count": 0, "follower_count": 0, "mutual_connections": [], "warm_intros_strategy": {"suggestion": "", "evidence": ""}, "influence_level": {"assessment": "", "evidence": ""} },
+  "persona_confidence": 0.0,
+  "data_gaps": []
+}"""
 
 
 @register_node("persona_builder")
@@ -148,14 +163,25 @@ async def _build_persona(
                 "but note the change."
             )
 
+    def _extract_raw(data: dict) -> str:
+        """Get the raw_response text from an agent output, or stringify the dict."""
+        if not data:
+            return "No data available."
+        raw = data.get("raw_response", "")
+        if raw and isinstance(raw, str):
+            return raw[:12000]
+        if data.get("skipped"):
+            return f"Skipped: {data.get('reason', 'no data')}"
+        return json.dumps(data, default=str)[:6000]
+
     context = f"""=== LINKEDIN PROFILE DATA ===
-{linkedin_data}
+{_extract_raw(linkedin_data)}
 
 === COMPANY DATA ===
-{company_data}
+{_extract_raw(company_data)}
 
 === ACTIVITY & POSTS DATA ===
-{activity_data}
+{_extract_raw(activity_data)}
 
 === DATA QUALITY ASSESSMENT ===
 LinkedIn data quality: {data_quality}
@@ -169,11 +195,36 @@ Activity data available: {bool(activity_data and not activity_data.get('skipped'
             "Be specific — cite exact quotes, post topics, job titles, company details.\n"
             "Do NOT use vague language like 'likely interested in technology'.\n"
             "Instead say 'Posts frequently about DevOps automation (3 posts in last month about CI/CD pipelines)'.\n\n"
+            "CRITICAL: Return ONLY a raw JSON object. No markdown fences, no explanation text before or after.\n"
+            "The first character of your response must be { and the last must be }.\n\n"
             f"{context}"
         )},
     ]
 
     response = await llm.ainvoke(messages)
+
+    # Try to parse and re-serialize the JSON to ensure it's clean
+    raw_content = response.content or ""
+    cleaned = raw_content.strip()
+    # Strip markdown fences safely
+    if cleaned.startswith("```"):
+        lines = cleaned.split("\n")
+        # Drop opening fence line
+        lines = lines[1:]
+        # Drop trailing fence line if present
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    # Extract JSON object if surrounded by text
+    first_brace = cleaned.find("{")
+    last_brace = cleaned.rfind("}")
+    if first_brace != -1 and last_brace > first_brace:
+        try:
+            parsed_json = json.loads(cleaned[first_brace:last_brace + 1])
+            # Re-serialize clean JSON as the raw_response
+            raw_content = json.dumps(parsed_json, ensure_ascii=False)
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.debug("[PersonaBuilder] JSON parse failed, keeping raw string: %s", exc)
 
     # Smarter confidence scoring based on all data sources
     confidence = 0.0
@@ -201,7 +252,7 @@ Activity data available: {bool(activity_data and not activity_data.get('skipped'
         confidence_reasons.append("activity_data_missing")
 
     # Response richness bonus (long, detailed response = better persona)
-    content_len = len(response.content or "")
+    content_len = len(raw_content)
     if content_len > 3000:
         confidence += 0.10
         confidence_reasons.append("rich_response")
@@ -215,7 +266,7 @@ Activity data available: {bool(activity_data and not activity_data.get('skipped'
 
     return {
         "persona": {
-            "raw_response": response.content,
+            "raw_response": raw_content,
             "confidence_breakdown": confidence_reasons,
         },
         "persona_confidence": round(confidence, 2),

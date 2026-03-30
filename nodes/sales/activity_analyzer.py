@@ -23,15 +23,14 @@ SYSTEM_PROMPT = """You are a social media analyst specializing in B2B sales inte
 You have access to LinkedIn tools.
 
 CRITICAL RULES:
-- You MUST call the get_person_profile tool with the linkedin_username parameter and sections="posts".
+- FIRST check the "EXISTING PROFILE DATA" in the user message — it likely already contains posts data.
+- If existing data has posts content, analyze those posts directly WITHOUT calling any tools.
+- Only call get_person_profile with sections="posts" if the existing data has NO post content at all.
 - Extract the username from the LinkedIn URL: https://linkedin.com/in/USERNAME → use "USERNAME".
 - NEVER call get_company_posts — that fetches company page posts, not person activity.
 - NEVER say "I can't access websites" — you have tools that CAN.
 - If the tool returns an error, work with the profile data already provided in the user message.
 - NEVER fabricate activity data.
-
-First check the "EXISTING PROFILE DATA" section in the user message — it may already contain
-posts_and_activity. Only call get_person_profile if you need fresher or more complete post data.
 
 Analyze the prospect's recent LinkedIn posts and activity IN DEPTH.
 
@@ -121,22 +120,31 @@ async def _analyze_activity(
     username = linkedin_url.rstrip("/").split("/in/")[-1] if "/in/" in linkedin_url else linkedin_url
 
     # Pass existing profile data (already fetched by linkedin_researcher) as context.
-    # This avoids a redundant scrape and gives the LLM real post data to work from.
+    # The linkedin_researcher already scraped experience,education,posts — reuse it.
     existing_raw = linkedin_data.get("raw_response", "") if isinstance(linkedin_data, dict) else ""
+
+    # Give the LLM enough data to work with — posts are often at the end of long responses
     existing_context = (
-        f"\n\nEXISTING PROFILE DATA (already fetched — use posts_and_activity section):\n"
-        f"{existing_raw[:3000]}"
+        f"\n\nEXISTING PROFILE DATA (already fetched — includes posts section):\n"
+        f"{existing_raw[:12000]}"
         if existing_raw else ""
     )
+
+    # If we already have substantial data, tell the LLM to use it instead of re-scraping
+    has_existing_data = len(existing_raw) > 1000
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": (
             f"Analyze activity for: {linkedin_url}\n"
             f"LinkedIn username: {username}\n"
-            f"Call get_person_profile with username='{username}' and sections='posts' "
-            f"for the freshest post data."
-            f"{existing_context}"
+            + (
+                f"The profile data below ALREADY includes posts. Analyze the posts from the existing data.\n"
+                f"Only call get_person_profile if the existing data has NO post content at all."
+                if has_existing_data
+                else f"Call get_person_profile with username='{username}' and sections='posts'."
+            )
+            + f"{existing_context}"
         )},
     ]
 

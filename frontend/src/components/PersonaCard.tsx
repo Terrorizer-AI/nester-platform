@@ -657,10 +657,27 @@ function parsePersona(persona: Record<string, unknown>): ParsedPersona {
 /* ── Utilities ────────────────────────────────────────────────────────────── */
 
 function tryParseJSON(text: string): Record<string, unknown> | null {
+  // Strip markdown fences
+  let cleaned = text.replace(/```json\s*/g, "").replace(/```/g, "").trim();
+
+  // Try direct parse first
   try {
-    const p = JSON.parse(text.replace(/```json\s*/g, "").replace(/```/g, "").trim());
+    const p = JSON.parse(cleaned);
     if (typeof p === "object" && p !== null && !Array.isArray(p)) return p as Record<string, unknown>;
-  } catch { /* not JSON */ }
+  } catch { /* not pure JSON */ }
+
+  // Try extracting the first JSON object from mixed text
+  // (LLMs often prefix/suffix JSON with explanation text)
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      const extracted = cleaned.slice(firstBrace, lastBrace + 1);
+      const p = JSON.parse(extracted);
+      if (typeof p === "object" && p !== null && !Array.isArray(p)) return p as Record<string, unknown>;
+    } catch { /* still not valid */ }
+  }
+
   return null;
 }
 function asObj(v: unknown): Record<string, unknown> | null {

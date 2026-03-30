@@ -20,9 +20,8 @@ class Settings(BaseSettings):
 
     # ── LLM Providers ────────────────────────────────────────────────────────
     openai_api_key: str = Field("", env="OPENAI_API_KEY")
-    openai_research_model: str = Field("gpt-4o-mini", env="OPENAI_RESEARCH_MODEL")
-    openai_synthesis_model: str = Field("gpt-4o-mini", env="OPENAI_SYNTHESIS_MODEL")
-    # Best-quality model for email composition — uses full research context
+    openai_research_model: str = Field("gpt-4o", env="OPENAI_RESEARCH_MODEL")
+    openai_synthesis_model: str = Field("gpt-4o", env="OPENAI_SYNTHESIS_MODEL")
     openai_email_model: str = Field("gpt-4o", env="OPENAI_EMAIL_MODEL")
 
     # ── Local Storage ─────────────────────────────────────────────────────────
