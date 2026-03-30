@@ -24,7 +24,7 @@ SYSTEM_PROMPT = """You are a LinkedIn research specialist. You have access to Li
 CRITICAL RULES:
 - You MUST call the get_person_profile tool with the linkedin_username parameter.
 - Extract the username from the LinkedIn URL: https://linkedin.com/in/USERNAME → use "USERNAME".
-- Pass only essential sections to avoid rate limits: sections="experience,education"
+- Pass only essential sections to avoid rate limits: sections="experience,education,posts"
 - NEVER say "I can't access websites" — you have tools that CAN.
 - If the tool returns an error or is unavailable, report the error in structured format.
 - NEVER generate fictional profile data. Only return data from tool results.
@@ -133,9 +133,9 @@ async def _research_profile(llm: Any, linkedin_url: str, tools: list) -> dict[st
         {"role": "user", "content": (
             f"Research this LinkedIn profile thoroughly: {linkedin_url}\n"
             f"Username to use: {username}\n"
-            f"Call get_person_profile with ONLY these sections: experience,education\n"
+            f"Call get_person_profile with ONLY these sections: experience,education,posts\n"
             f"The main profile page already includes name, title, headline, about, skills.\n"
-            f"Do NOT request posts, interests, honors, languages, or contact_info — these trigger rate limits.\n"
+            f"Do NOT request interests, honors, languages, or contact_info — these trigger rate limits.\n"
             f"Extract every available data point from the results."
         )},
     ]
