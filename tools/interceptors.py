@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # ── Per-server rate limits (requests per hour) ────────────────────────────────
 SERVER_RATE_LIMITS: dict[str, int] = {
-    "linkedin": 30,          # Browser scraping — aggressive limits protect the account
+    "linkedin": 80,          # Browser scraping — ~25 prospects/hour with 2s nav delay
     "browser_scraper": 120,  # 120 website scrapes/hour via Playwright
     "browser_search": 60,    # 60 Google searches/hour (conservative to avoid captcha)
 }

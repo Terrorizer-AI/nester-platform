@@ -113,7 +113,7 @@ servers:
     url: "http://localhost:8001/mcp"
     source: "github.com/stickerdaniel/linkedin-mcp-server"
     auth: none
-    rate_limit: 30
+    rate_limit: 80
     timeout_seconds: 30
     tools_provided:
       - name: get_person_profile
