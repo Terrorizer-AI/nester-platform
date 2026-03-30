@@ -48,7 +48,7 @@ be for anyone", you have failed.
 - No exclamation marks except possibly in the subject line
 - Short paragraphs. White space is your friend.
 
-## Structure (150-250 words body)
+## Structure (200-350 words body)
 
 **Opening (1-2 sentences)**
 Reference ONE SPECIFIC, VERIFIABLE detail — a LinkedIn post they wrote (quote 3-5 words),
@@ -102,7 +102,7 @@ Return valid JSON only — an array of exactly 3 email drafts, each using a DIFF
   {
     "angle": "one-line label for this variant's hook (e.g. 'Company mission angle', 'Recent post angle', 'Career transition angle')",
     "subject": "subject line (under 55 chars)",
-    "body": "full email body (150-250 words, no greeting like 'Hi [Name]' — start straight into the opening hook)",
+    "body": "full email body (200-350 words, no greeting like 'Hi [Name]' — start straight into the opening hook)",
     "personalization_notes": "2-3 sentences: exactly which data points from research were used and why",
     "style_match": "1 sentence: how this email mirrors the prospect's communication DNA",
     "email_quality_score": 0-100,
@@ -365,7 +365,7 @@ CTA Style: {cta}"""
         "  IMPORTANT: If a post is about hiring a role likely filled (>3 months ago),\n"
         "  skip it and use the company mission/product angle instead.\n"
         "Step 3 — For each hook, find the intersection with the sender's value proposition.\n"
-        "Step 4 — Write all 3 emails following the structure in the system prompt (150-250 words each).\n"
+        "Step 4 — Write all 3 emails following the structure in the system prompt (200-350 words each).\n"
         "Step 5 — Apply all 4 quality checks to EACH variant. Rewrite any that fail.\n\n"
         "CRITICAL REQUIREMENTS:\n"
         "- Each opening MUST cite something specific and CURRENT\n"

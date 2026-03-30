@@ -288,8 +288,11 @@ FIRECRAWL_API_KEY=your_firecrawl_key
 # --- Search ---
 TAVILY_API_KEY=your_tavily_key
 
-# --- Calendly (optional) ---
+# --- Calendly (optional — auto-configured by setup wizard) ---
 CALENDLY_API_KEY=
+CALENDLY_USER_URI=
+CALENDLY_EVENT_TYPE_URI=
+CALENDLY_SCHEDULING_URL=
 
 # --- Email Sender ---
 SMTP_HOST=smtp.gmail.com
@@ -341,6 +344,57 @@ echo -e "  ${BOLD}${CYAN}4/4 — Calendly${NC} ${DIM}(optional)${NC}"
 echo -e "  ${DIM}Generates unique booking links in outreach emails.${NC}"
 echo -e "  ${DIM}Get yours at: https://calendly.com/integrations/api_webhooks${NC}"
 ask_key "CALENDLY_API_KEY" "Enter your Calendly API key:" "optional"
+
+# Auto-fetch Calendly user URI and event type if key was provided
+calendly_key=$(grep "^CALENDLY_API_KEY=" .env 2>/dev/null | cut -d'=' -f2-)
+if [ -n "$calendly_key" ] && [ "$calendly_key" != "your_calendly_key" ]; then
+    info "Fetching your Calendly account details..."
+
+    # Get user URI
+    user_uri=$(curl -s -H "Authorization: Bearer $calendly_key" \
+        "https://api.calendly.com/users/me" 2>/dev/null | \
+        python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('resource',{}).get('uri',''))" 2>/dev/null || true)
+
+    if [ -n "$user_uri" ]; then
+        # Add or update CALENDLY_USER_URI in .env
+        if grep -q "^CALENDLY_USER_URI=" .env 2>/dev/null; then
+            sed "s|^CALENDLY_USER_URI=.*|CALENDLY_USER_URI=${user_uri}|" .env > .env.tmp && mv .env.tmp .env
+        else
+            echo "CALENDLY_USER_URI=${user_uri}" >> .env
+        fi
+
+        # Get scheduling URL for static fallback
+        sched_url=$(curl -s -H "Authorization: Bearer $calendly_key" \
+            "https://api.calendly.com/users/me" 2>/dev/null | \
+            python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('resource',{}).get('scheduling_url',''))" 2>/dev/null || true)
+
+        if [ -n "$sched_url" ]; then
+            if grep -q "^CALENDLY_SCHEDULING_URL=" .env 2>/dev/null; then
+                sed "s|^CALENDLY_SCHEDULING_URL=.*|CALENDLY_SCHEDULING_URL=${sched_url}|" .env > .env.tmp && mv .env.tmp .env
+            else
+                echo "CALENDLY_SCHEDULING_URL=${sched_url}" >> .env
+            fi
+        fi
+
+        # Get first event type URI
+        event_uri=$(curl -s -H "Authorization: Bearer $calendly_key" \
+            "https://api.calendly.com/event_types?user=${user_uri}&active=true" 2>/dev/null | \
+            python3 -c "import sys,json; d=json.load(sys.stdin); evts=d.get('collection',[]); print(evts[0]['uri'] if evts else '')" 2>/dev/null || true)
+
+        if [ -n "$event_uri" ]; then
+            if grep -q "^CALENDLY_EVENT_TYPE_URI=" .env 2>/dev/null; then
+                sed "s|^CALENDLY_EVENT_TYPE_URI=.*|CALENDLY_EVENT_TYPE_URI=${event_uri}|" .env > .env.tmp && mv .env.tmp .env
+            else
+                echo "CALENDLY_EVENT_TYPE_URI=${event_uri}" >> .env
+            fi
+            ok "Calendly configured (event type + scheduling link auto-detected)"
+        else
+            warn "Could not find an active event type — create one at calendly.com first"
+        fi
+    else
+        warn "Could not verify Calendly API key — check it's correct"
+    fi
+fi
 echo ""
 
 # ── Step 7: Sender Profile ───────────────────────────────────────────────────

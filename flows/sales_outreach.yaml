@@ -71,7 +71,7 @@ nodes:
     retry: 2
     on_error: retry_then_abort
     config:
-      max_words: 150
+      max_words: 250
       tone: professional_warm
       cta_type: low_commitment
 

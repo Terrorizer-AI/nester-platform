@@ -122,7 +122,7 @@ def create_output_formatter(params: dict[str, Any]) -> Callable:
         llm = ChatOpenAI(
             model=model_config.model_id,
             temperature=0.0,
-            max_tokens=6000,
+            max_tokens=12000,
         )
 
         try:
@@ -155,12 +155,12 @@ def _get_raw(data: Any) -> str:
     if isinstance(data, dict):
         raw = data.get("raw_response", "")
         if raw and isinstance(raw, str):
-            return raw[:6000]  # cap per agent to stay within context
+            return raw[:10000]  # cap per agent to stay within context
         # If skipped
         if data.get("skipped"):
             return f"Skipped: {data.get('reason', 'no data')}"
-        return json.dumps(data, default=str)[:2000]
-    return str(data)[:2000]
+        return json.dumps(data, default=str)[:4000]
+    return str(data)[:4000]
 
 
 async def _format_output(
