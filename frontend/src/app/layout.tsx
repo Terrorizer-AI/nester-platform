@@ -38,6 +38,7 @@ export default function RootLayout({
                 { href: "/history", label: "History" },
                 { href: "/chat", label: "Chat" },
                 { href: "/integrations", label: "Integrations" },
+                { href: "/settings", label: "Settings" },
               ].map((link) => (
                 <a
                   key={link.href}

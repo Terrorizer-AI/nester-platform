@@ -91,10 +91,13 @@ BAD: "Let's schedule a 30-minute call at your convenience."
 
 ## SENDER IDENTITY RULES (CRITICAL)
 - You are writing AS the sender (section 7). Use their name, company, and role.
-- The value proposition, case studies, and pain points MUST come from section 8 (Targeting Brief).
-- NEVER invent or hallucinate services, products, company names, or results that are not in the Targeting Brief.
-- If the Targeting Brief has no case studies, do NOT fabricate specific numbers like "reduced X by 30%".
-  Instead, describe the general approach: "We've helped similar companies streamline X."
+- PRIMARY SOURCE for services, case studies, value proposition, and proof:
+  Section 9 (COMPANY KNOWLEDGE — uploaded docs). This is real, authoritative company data.
+  Quote actual product names, service names, results and client examples FROM SECTION 9 directly.
+- SECONDARY SOURCE: Section 8 (Targeting Brief) — use if section 9 is empty or doesn't cover the point.
+- NEVER invent or hallucinate services, products, client names, or numbers not present in sections 8 or 9.
+- If section 9 has case studies with numbers → use them exactly as written. Do not soften or generalise.
+- If neither section has case studies → describe the general approach without fabricated numbers.
 - Sign off with the sender's actual name from section 7.
 
 ## Quality Checks (apply all before finalizing)
@@ -314,6 +317,25 @@ async def _compose_email(
     tone = targeting_brief.get("email_tone", "professional")
     cta = targeting_brief.get("cta_preference", "soft")
 
+    # ── Inject company knowledge from Drive docs ──────────────────────────────
+    knowledge_text = ""
+    try:
+        import os
+        from knowledge.retriever import get_company_context
+        # Build query from prospect context for relevance — include industry/role for better chunk match
+        li_summary = _summarise(linkedin_data, 400)
+        persona_summary = _summarise(persona, 300)
+        prospect_ctx = f"{li_summary} {persona_summary}"
+        ctx = get_company_context(
+            query=f"services products case studies client results value proposition pricing {prospect_ctx}",
+            api_key=os.environ.get("OPENAI_API_KEY", ""),
+            top_k=10,
+        )
+        if ctx["has_knowledge"]:
+            knowledge_text = ctx["formatted"]
+    except Exception as e:
+        logger.debug("[EmailComposer] Knowledge retrieval skipped: %s", e)
+
     # ── Build rich research context ───────────────────────────────────────────
     # GPT-4o has 128K context — use generous limits so the LLM sees full details
     context = f"""
@@ -344,15 +366,18 @@ Primary Hook: {primary_hook}
 ━━━ 7. SENDER INFO (who is writing this email) ━━━━━━━━━━━━━━━━━━━━━━━
 {sender_text}
 
-━━━ 8. TARGETING BRIEF (sender's company, value prop, case studies) ━━━
-{brief_text}
+━━━ 8. COMPANY KNOWLEDGE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ PRIMARY SOURCE — use this for all services, case studies, value prop, and proof.
+These are real facts from the sender's uploaded company documents. Quote them directly.
+{knowledge_text if knowledge_text else "No company docs synced yet."}
 
-CRITICAL: The email MUST reference the sender's company and value proposition
-from sections 7 and 8 above. Do NOT invent services or case studies that are
-not mentioned in the targeting brief. If no case studies are provided, use
-general industry observations instead of fabricated numbers.
+━━━ 9. TARGETING BRIEF (manual overrides — use if section 8 is empty) ━
+{brief_text if brief_text != "Not provided" else "Not provided — rely entirely on section 8 company knowledge above."}
 
-━━━ 9. TONE & CTA PREFERENCES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRITICAL: Always reference the sender's real company, services and results.
+Use section 8 (company docs) as the primary source. Never fabricate.
+
+━━━ 10. TONE & CTA PREFERENCES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Tone: {tone}
 CTA Style: {cta}"""
 

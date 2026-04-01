@@ -143,6 +143,39 @@ CREATE TABLE IF NOT EXISTS integration_credentials (
     last_tested TEXT,
     test_result TEXT DEFAULT 'untested'
 );
+
+-- Company knowledge chunks from Google Drive docs (with embeddings for similarity search)
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    embedding TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(file_id, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_file ON knowledge_chunks(file_id);
+
+-- Drive file sync state (tracks what has been indexed)
+CREATE TABLE IF NOT EXISTS knowledge_files (
+    file_id TEXT PRIMARY KEY,
+    file_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    modified_time TEXT NOT NULL,
+    chunk_count INTEGER DEFAULT 0,
+    indexed_at TEXT NOT NULL
+);
+
+-- Company master profile (LLM-generated summary of all company docs)
+CREATE TABLE IF NOT EXISTS company_profile (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    profile_text TEXT NOT NULL,
+    doc_count INTEGER DEFAULT 0,
+    generated_at TEXT NOT NULL,
+    folder_id TEXT DEFAULT ''
+);
 """
 
 
@@ -730,3 +763,112 @@ def count_runs(flow_name: str | None = None) -> int:
     else:
         row = conn.execute("SELECT COUNT(*) as cnt FROM run_history").fetchone()
     return row["cnt"] if row else 0
+
+
+# ── Company Knowledge (Drive sync + vector search) ───────────────────────────
+
+
+def upsert_knowledge_chunk(
+    file_id: str,
+    file_name: str,
+    chunk_index: int,
+    content: str,
+    embedding: list[float],
+) -> None:
+    """Insert or replace a knowledge chunk with its embedding."""
+    with _transaction() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO knowledge_chunks "
+            "(file_id, file_name, chunk_index, content, embedding) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (file_id, file_name, chunk_index, content, json.dumps(embedding)),
+        )
+
+
+def delete_knowledge_file(file_id: str) -> int:
+    """Delete all chunks for a file. Returns count of deleted chunks."""
+    with _transaction() as conn:
+        cursor = conn.execute(
+            "DELETE FROM knowledge_chunks WHERE file_id = ?", (file_id,)
+        )
+        conn.execute("DELETE FROM knowledge_files WHERE file_id = ?", (file_id,))
+        return cursor.rowcount
+
+
+def upsert_knowledge_file(
+    file_id: str,
+    file_name: str,
+    mime_type: str,
+    modified_time: str,
+    chunk_count: int,
+) -> None:
+    """Track a synced Drive file."""
+    with _transaction() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO knowledge_files "
+            "(file_id, file_name, mime_type, modified_time, chunk_count, indexed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (file_id, file_name, mime_type, modified_time, chunk_count, _now_iso()),
+        )
+
+
+def get_knowledge_file(file_id: str) -> dict[str, Any] | None:
+    """Get sync state for a Drive file."""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM knowledge_files WHERE file_id = ?", (file_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_knowledge_files() -> list[dict[str, Any]]:
+    """List all synced Drive files."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM knowledge_files ORDER BY indexed_at DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_all_knowledge_chunks() -> list[dict[str, Any]]:
+    """Return all chunks with embeddings for similarity search."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT id, file_id, file_name, chunk_index, content, embedding "
+        "FROM knowledge_chunks ORDER BY file_id, chunk_index"
+    ).fetchall()
+    result = []
+    for r in rows:
+        item = dict(r)
+        item["embedding"] = json.loads(item["embedding"])
+        result.append(item)
+    return result
+
+
+def save_company_profile(
+    profile_text: str,
+    doc_count: int,
+    folder_id: str = "",
+) -> None:
+    """Save or update the LLM-generated company master profile."""
+    with _transaction() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO company_profile (id, profile_text, doc_count, generated_at, folder_id) "
+            "VALUES (1, ?, ?, ?, ?)",
+            (profile_text, doc_count, _now_iso(), folder_id),
+        )
+
+
+def get_company_profile() -> dict[str, Any] | None:
+    """Get the company master profile."""
+    conn = _get_conn()
+    row = conn.execute("SELECT * FROM company_profile WHERE id = 1").fetchone()
+    return dict(row) if row else None
+
+
+def clear_knowledge() -> None:
+    """Wipe all knowledge chunks, files, and profile (full re-sync)."""
+    with _transaction() as conn:
+        conn.execute("DELETE FROM knowledge_chunks")
+        conn.execute("DELETE FROM knowledge_files")
+        conn.execute("DELETE FROM company_profile")

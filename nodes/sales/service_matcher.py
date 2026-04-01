@@ -86,11 +86,39 @@ def create_service_matcher(params: dict[str, Any]) -> Callable:
 async def _match_services(
     llm: Any, persona: dict, service_catalog: list, targeting_brief: dict,
 ) -> dict[str, Any]:
-    catalog_text = "\n".join(
-        f"- {s.get('name', 'Unknown')}: {s.get('description', '')}"
-        for s in service_catalog
-    ) if service_catalog else "No service catalog provided — infer relevant services from the persona's pain points and industry context."
+    # ── Load company knowledge first — it's the primary source ──────────────
+    import os
+    knowledge_text = ""
+    knowledge_catalog = ""
+    try:
+        from knowledge.retriever import get_company_context
+        persona_str = str(persona)[:500]
+        ctx = get_company_context(
+            query=f"services products case studies value proposition pricing {persona_str}",
+            api_key=os.environ.get("OPENAI_API_KEY", ""),
+            top_k=8,
+        )
+        if ctx["has_knowledge"]:
+            knowledge_text = ctx["formatted"]
+            knowledge_catalog = (
+                "\n⚡ PRIMARY SOURCE: Use the COMPANY KNOWLEDGE section below for all "
+                "service names, case studies, and value propositions."
+            )
+    except Exception as e:
+        logger.debug("[ServiceMatcher] Knowledge retrieval skipped: %s", e)
 
+    # ── Manual service catalog (secondary — used only if no docs) ─────────────
+    if service_catalog:
+        catalog_text = "\n".join(
+            f"- {s.get('name', 'Unknown')}: {s.get('description', '')}"
+            for s in service_catalog
+        )
+    elif knowledge_text:
+        catalog_text = "See COMPANY KNOWLEDGE section below — extract services from there."
+    else:
+        catalog_text = "No service catalog — infer from persona's pain points and industry context."
+
+    # ── Manual targeting brief (secondary — used only if no docs) ─────────────
     brief_text = ""
     if any(targeting_brief.values()):
         parts = []
@@ -104,7 +132,15 @@ async def _match_services(
             parts.append(f"Ideal Outcome: {targeting_brief['ideal_outcome']}")
         if targeting_brief.get("case_studies"):
             parts.append(f"Case Studies: {targeting_brief['case_studies']}")
-        brief_text = f"\n\n=== TARGETING BRIEF ===\n" + "\n".join(parts)
+        brief_text = (
+            "\n\n=== TARGETING BRIEF (manual — secondary source) ===\n"
+            + "\n".join(parts)
+        )
+
+    knowledge_section = (
+        f"\n\n=== COMPANY KNOWLEDGE (uploaded docs — PRIMARY SOURCE) ===\n{knowledge_text}"
+        if knowledge_text else ""
+    )
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -112,9 +148,11 @@ async def _match_services(
             "Find the best service match for this prospect.\n\n"
             "IMPORTANT: Your primary_hook must be SPECIFIC to this person — "
             "reference their company, role, or a problem visible in their data. "
-            "Generic hooks are useless.\n\n"
+            "Generic hooks are useless.\n"
+            f"{knowledge_catalog}\n\n"
             f"=== PROSPECT PERSONA ===\n{persona}\n\n"
             f"=== SERVICE CATALOG ===\n{catalog_text}"
+            f"{knowledge_section}"
             f"{brief_text}"
         )},
     ]

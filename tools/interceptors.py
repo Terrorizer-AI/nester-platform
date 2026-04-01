@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # ── Per-server rate limits (requests per hour) ────────────────────────────────
 SERVER_RATE_LIMITS: dict[str, int] = {
-    "linkedin": 80,          # Browser scraping — ~25 prospects/hour with 2s nav delay
+    "linkedin": 200,         # Browser scraping — ~65 prospects/hour with 2s nav delay
     "browser_scraper": 120,  # 120 website scrapes/hour via Playwright
     "browser_search": 60,    # 60 Google searches/hour (conservative to avoid captcha)
 }
@@ -143,7 +143,7 @@ async def intercepted_tool_call(
         timeout_seconds = SERVER_TIMEOUTS.get(server_name, 10.0)
     start = time.monotonic()
 
-    # 1. Rate limit check (LinkedIn: 30/hour)
+    # 1. Rate limit check
     if not _check_rate_limit(server_name):
         logger.warning(
             "[Tool] %s.%s rate-limited (%d/hr max)",

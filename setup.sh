@@ -436,7 +436,57 @@ else
     ok "Email already configured: $current_smtp"
 fi
 
-# ── Step 8: Start Servers ────────────────────────────────────────────────────
+# ── Step 8: Google Drive (Company Knowledge) ─────────────────────────────────
+
+step "Google Drive — Company Knowledge"
+
+echo ""
+echo -e "  ${DIM}Connect Google Drive so Nester can read your company docs${NC}"
+echo -e "  ${DIM}(pitch deck, case studies, service catalog, pricing, etc.)${NC}"
+echo -e "  ${DIM}These docs make emails reference REAL services and case studies.${NC}"
+echo ""
+
+# Ask for folder ID
+current_folder_id=$(grep "^GOOGLE_DRIVE_FOLDER_ID=" .env 2>/dev/null | cut -d'=' -f2- || true)
+if [ -z "$current_folder_id" ] || [ "$current_folder_id" = "" ]; then
+    echo -e "  ${DIM}Create a folder in Google Drive, upload your company docs,${NC}"
+    echo -e "  ${DIM}then copy the folder ID from the URL:${NC}"
+    echo -e "  ${DIM}drive.google.com/drive/folders/${BOLD}YOUR_FOLDER_ID${NC}${DIM}  ← this part${NC}"
+    echo ""
+    echo -ne "  ${BOLD}Google Drive Folder ID (or press Enter to skip): ${NC}"
+    read -r gdrive_folder_id
+    if [ -n "$gdrive_folder_id" ]; then
+        if grep -q "^GOOGLE_DRIVE_FOLDER_ID=" .env 2>/dev/null; then
+            sed "s|^GOOGLE_DRIVE_FOLDER_ID=.*|GOOGLE_DRIVE_FOLDER_ID=${gdrive_folder_id}|" .env > .env.tmp && mv .env.tmp .env
+        else
+            echo "GOOGLE_DRIVE_FOLDER_ID=${gdrive_folder_id}" >> .env
+        fi
+        ok "Google Drive folder ID saved"
+    else
+        warn "Skipped — you can add GOOGLE_DRIVE_FOLDER_ID to .env later"
+    fi
+else
+    ok "Google Drive folder already configured: $current_folder_id"
+fi
+
+# Check for credentials.json
+creds_file="$HOME/.credentials/credentials.json"
+if [ ! -f "$creds_file" ]; then
+    echo ""
+    echo -e "  ${YELLOW}⚠${NC}  Google credentials.json not found at ~/.credentials/credentials.json"
+    echo -e "  ${DIM}To set up Google Drive access:${NC}"
+    echo -e "  ${DIM}1. Go to console.cloud.google.com → New project${NC}"
+    echo -e "  ${DIM}2. Enable the Google Drive API${NC}"
+    echo -e "  ${DIM}3. Create OAuth 2.0 credentials (Desktop app)${NC}"
+    echo -e "  ${DIM}4. Download credentials.json${NC}"
+    echo -e "  ${DIM}5. Place it at: ~/.credentials/credentials.json${NC}"
+    echo -e "  ${DIM}Then visit Settings → Company Knowledge in the app to sync.${NC}"
+else
+    ok "Google credentials.json found"
+fi
+echo ""
+
+# ── Step 9: Start Servers ────────────────────────────────────────────────────
 
 step "Starting Nester"
 

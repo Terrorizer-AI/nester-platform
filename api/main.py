@@ -167,6 +167,7 @@ from api.streaming import router as streaming_router
 from api.routes.verify import router as verify_router
 from api.routes.runs import router as runs_router
 from api.routes.chat import router as chat_router
+from api.routes.knowledge import router as knowledge_router
 
 app.include_router(health_router)
 app.include_router(flows_router)
@@ -178,6 +179,7 @@ app.include_router(streaming_router)
 app.include_router(verify_router)
 app.include_router(runs_router)
 app.include_router(chat_router)
+app.include_router(knowledge_router)
 
 
 @app.get("/")

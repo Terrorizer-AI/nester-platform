@@ -107,6 +107,29 @@ nohup python tools/servers/web_scraper.py > /tmp/nester-scraper-mcp.log 2>&1 &
 echo $! > /tmp/nester-scraper-mcp.pid
 ok "Web Scraper MCP starting (PID $!) → port 8102"
 
+# ── Sync company knowledge from Google Drive (background) ────────────────────
+
+# Re-sync previously selected Drive files if any were selected via the picker
+# (runs a quick delta sync — skips files that haven't changed)
+nohup python -c "
+import sys, os
+sys.path.insert(0, '.')
+from dotenv import load_dotenv; load_dotenv('.env')
+from memory.sqlite_ops import init_sqlite_ops, session_get, is_sqlite_ready
+init_sqlite_ops()
+file_ids = session_get('gdrive_selected_files') or []
+token_row = None
+try:
+    from memory.sqlite_ops import get_oauth_token
+    t = get_oauth_token('google_drive')
+    if t: token_row = t.get('access_token')
+except: pass
+if file_ids and token_row:
+    from knowledge.drive_sync import sync_drive_files
+    sync_drive_files(file_ids, token_row, os.environ.get('OPENAI_API_KEY',''))
+" > /tmp/nester-knowledge-sync.log 2>&1 &
+info "Company knowledge sync check (background) → /tmp/nester-knowledge-sync.log"
+
 # ── Start frontend ───────────────────────────────────────────────────────────
 
 cd "$SCRIPT_DIR/frontend"

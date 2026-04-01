@@ -40,6 +40,20 @@ interface SalesForm extends SenderProfile {
   company_linkedin_url: string;
 }
 
+interface ProspectRow {
+  id: string;
+  linkedin_url: string;
+  company_website: string;
+  company_linkedin_url: string;
+  status: "idle" | "running" | "completed" | "failed";
+  result: Record<string, unknown> | null;
+  agents: AgentStep[];
+  duration_ms: number | null;
+}
+
+const CONCURRENCY = 5;
+const STAGGER_MS  = 15_000; // 15s between starts to avoid LinkedIn burst detection
+
 // ── Pipeline config ───────────────────────────────────────────────────────────
 
 const PIPELINE_STAGES: AgentStep[] = [
@@ -58,6 +72,20 @@ const BLANK_PROFILE: SenderProfile = {
   value_proposition: "", target_pain_points: "", ideal_outcome: "",
   case_studies: "", email_tone: "professional", cta_preference: "soft",
 };
+
+function makeProspect(overrides: Partial<ProspectRow> = {}): ProspectRow {
+  return {
+    id: Math.random().toString(36).slice(2),
+    linkedin_url: "",
+    company_website: "",
+    company_linkedin_url: "",
+    status: "idle",
+    result: null,
+    agents: PIPELINE_STAGES.map(a => ({ ...a })),
+    duration_ms: null,
+    ...overrides,
+  };
+}
 
 // ── Profile persistence ───────────────────────────────────────────────────────
 
@@ -844,11 +872,8 @@ export default function FlowPage() {
   const name = params.name as string;
   const isSales = name === "sales_outreach";
 
-  const [salesForm, setSalesForm] = useState<SalesForm>({
-    linkedin_url: "", company_website: "", company_linkedin_url: "",
-    ...BLANK_PROFILE,
-  });
-
+  // ── Sender profile (shared across all prospects) ─────────────────────────
+  const [senderForm, setSenderForm] = useState<SenderProfile>({ ...BLANK_PROFILE });
   const [savedProfile, setSavedProfile] = useState<SenderProfile | null>(null);
   const [profileMode, setProfileMode] = useState<"saved" | "editing" | "new">("new");
   const [profileLoaded, setProfileLoaded] = useState(false);
@@ -857,98 +882,244 @@ export default function FlowPage() {
   const [serviceInput, setServiceInput] = useState("");
   const [serviceTags, setServiceTags] = useState<string[]>([]);
 
-  const [agents, setAgents] = useState<AgentStep[]>(PIPELINE_STAGES.map(a => ({ ...a })));
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<Record<string, unknown> | null>(null);
-  const [runMeta, setRunMeta] = useState<{ duration_ms: number } | null>(null);
+  // ── Prospect queue ────────────────────────────────────────────────────────
+  const [prospects, setProspects] = useState<ProspectRow[]>([makeProspect()]);
+  const [selectedId, setSelectedId] = useState<string>(() => "");
+  const [runAllActive, setRunAllActive] = useState(false);
+
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [pipelineCollapsed, setPipelineCollapsed] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Knowledge panel state
+  const [knowledgeDocCount, setKnowledgeDocCount] = useState(0);
+  const [knowledgeDocs, setKnowledgeDocs] = useState<{ file_id: string; file_name: string; mime_type: string; chunk_count: number }[]>([]);
+  const [knowledgeSyncing, setKnowledgeSyncing] = useState(false);
+  const [knowledgeDeletingId, setKnowledgeDeletingId] = useState<string | null>(null);
+  const [knowledgeMsg, setKnowledgeMsg] = useState("");
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
 
   // Load saved profile on mount
   useEffect(() => {
     const p = loadSavedProfile();
     if (p) {
       setSavedProfile(p);
-      setSalesForm(prev => ({ ...prev, ...p }));
+      setSenderForm(p);
       setProfileMode("saved");
       if (p.services) setServiceTags(p.services.split(",").map(s => s.trim()).filter(s => s && s !== "[object Object]"));
     }
     setProfileLoaded(true);
   }, []);
 
-  const updateSales = (field: keyof SalesForm, value: string) =>
-    setSalesForm(prev => ({ ...prev, [field]: value }));
+  // Select first prospect by default once mounted
+  useEffect(() => {
+    setSelectedId(prev => prev || prospects[0]?.id || "");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const refreshKnowledge = useCallback(() => {
+    fetch(`${API}/knowledge/status`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setKnowledgeDocCount(d.doc_count || 0); })
+      .catch(() => {});
+    fetch(`${API}/knowledge/docs`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setKnowledgeDocs(d.docs || []); })
+      .catch(() => {});
+  }, []);
+
+  // Load knowledge status + docs on mount
+  useEffect(() => { refreshKnowledge(); }, [refreshKnowledge]);
+
+  const updateSender = (field: keyof SenderProfile, value: string) =>
+    setSenderForm(prev => ({ ...prev, [field]: value }));
 
   const addServiceTag = (tag: string) => {
     const trimmed = tag.trim();
     if (!trimmed || serviceTags.includes(trimmed)) return;
     const next = [...serviceTags, trimmed];
     setServiceTags(next);
-    setSalesForm(prev => ({ ...prev, services: next.join(", ") }));
+    setSenderForm(prev => ({ ...prev, services: next.join(", ") }));
     setServiceInput("");
   };
 
   const removeServiceTag = (tag: string) => {
     const next = serviceTags.filter(t => t !== tag);
     setServiceTags(next);
-    setSalesForm(prev => ({ ...prev, services: next.join(", ") }));
+    setSenderForm(prev => ({ ...prev, services: next.join(", ") }));
   };
 
   const handleSaveProfile = () => {
-    const profile = extractProfile(salesForm);
-    saveProfile(profile);
-    setSavedProfile(profile);
+    saveProfile(senderForm);
+    setSavedProfile(senderForm);
     setProfileMode("saved");
   };
 
   const handleClearProfile = () => {
     try { localStorage.removeItem(PROFILE_KEY); } catch { /* noop */ }
     setSavedProfile(null);
-    setSalesForm(prev => ({ ...prev, ...BLANK_PROFILE }));
+    setSenderForm({ ...BLANK_PROFILE });
     setServiceTags([]);
     setProfileMode("new");
   };
 
-  const runFlow = useCallback(async () => {
-    if (isSales) {
-      const profile = extractProfile(salesForm);
-      saveProfile(profile);
-      setSavedProfile(profile);
+  // ── Prospect queue helpers ────────────────────────────────────────────────
+  const addProspect = () => {
+    const p = makeProspect();
+    setProspects(prev => [...prev, p]);
+    setSelectedId(p.id);
+  };
+
+  const removeProspect = (id: string) => {
+    setProspects(prev => {
+      const next = prev.filter(p => p.id !== id);
+      return next.length ? next : [makeProspect()];
+    });
+    setSelectedId(prev => {
+      if (prev !== id) return prev;
+      const remaining = prospects.filter(p => p.id !== id);
+      return remaining[0]?.id || "";
+    });
+  };
+
+  const updateProspect = (id: string, field: keyof Pick<ProspectRow, "linkedin_url" | "company_website" | "company_linkedin_url">, value: string) => {
+    setProspects(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
+  };
+
+  const selectedProspect = prospects.find(p => p.id === selectedId) || prospects[0] || null;
+
+  const openKnowledgePicker = useCallback(async () => {
+    setKnowledgeSyncing(true);
+    setKnowledgeMsg("Loading Google APIs...");
+    try {
+      // Load Google Identity and Picker scripts
+      await Promise.all([
+        new Promise<void>(resolve => {
+          if ((window as any).google?.accounts) { resolve(); return; }
+          const s = document.createElement("script");
+          s.src = "https://accounts.google.com/gsi/client";
+          s.onload = () => resolve();
+          document.head.appendChild(s);
+        }),
+        new Promise<void>(resolve => {
+          if ((window as any).gapi) { resolve(); return; }
+          const s = document.createElement("script");
+          s.src = "https://apis.google.com/js/api.js";
+          s.onload = () => resolve();
+          document.head.appendChild(s);
+        }),
+      ]);
+
+      // Get status for client_id
+      const statusRes = await fetch(`${API}/knowledge/status`);
+      const statusData = statusRes.ok ? await statusRes.json() : {};
+      const clientId = statusData.google_client_id || "";
+      if (!clientId) { setKnowledgeMsg("GOOGLE_CLIENT_ID not configured"); setKnowledgeSyncing(false); return; }
+
+      setKnowledgeMsg("Authorizing with Google...");
+
+      const tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: "https://www.googleapis.com/auth/drive.readonly",
+        callback: (tokenResponse: any) => {
+          if (tokenResponse.error) { setKnowledgeMsg("Auth failed: " + tokenResponse.error); setKnowledgeSyncing(false); return; }
+          const accessToken = tokenResponse.access_token;
+          setKnowledgeMsg("Opening file picker...");
+
+          (window as any).gapi.load("picker", () => {
+            const picker = new (window as any).google.picker.PickerBuilder()
+              .addView(new (window as any).google.picker.DocsView()
+                .setIncludeFolders(false)
+                .setSelectFolderEnabled(false))
+              .setOAuthToken(accessToken)
+              .enableFeature((window as any).google.picker.Feature.MULTISELECT_ENABLED)
+              .setCallback(async (data: any) => {
+                if (data.action !== (window as any).google.picker.Action.PICKED) {
+                  if (data.action === (window as any).google.picker.Action.CANCEL) {
+                    setKnowledgeMsg(""); setKnowledgeSyncing(false);
+                  }
+                  return;
+                }
+                const files = data.docs.map((d: any) => ({ id: d.id, name: d.name, mimeType: d.mimeType }));
+                setKnowledgeMsg(`Syncing ${files.length} file(s)...`);
+                try {
+                  const res = await fetch(`${API}/knowledge/files`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ files, access_token: accessToken }),
+                  });
+                  if (res.ok) {
+                    setKnowledgeMsg(`✓ Syncing ${files.length} file(s) in background`);
+                    setTimeout(() => {
+                      refreshKnowledge();
+                      setKnowledgeMsg("");
+                    }, 8000);
+                  } else {
+                    setKnowledgeMsg("Sync failed — check backend logs");
+                  }
+                } catch { setKnowledgeMsg("Network error"); }
+                setKnowledgeSyncing(false);
+              })
+              .build();
+            picker.setVisible(true);
+          });
+        },
+      });
+      tokenClient.requestAccessToken();
+    } catch (err: any) {
+      setKnowledgeMsg("Error: " + (err?.message || "unknown"));
+      setKnowledgeSyncing(false);
     }
+  }, [refreshKnowledge]);
 
-    setRunning(true);
-    setResult(null);
-    setRunMeta(null);
+  // ── Run a single prospect ─────────────────────────────────────────────────
+  const runProspect = useCallback(async (prospectId: string) => {
+    const prospect = prospects.find(p => p.id === prospectId);
+    if (!prospect || prospect.status === "running") return;
+
+    // Save profile on first run
+    saveProfile(senderForm);
+    setSavedProfile(senderForm);
+
+    // Reset this prospect's state
+    setProspects(prev => prev.map(p => p.id === prospectId
+      ? { ...p, status: "running", result: null, duration_ms: null, agents: PIPELINE_STAGES.map(a => ({ ...a })) }
+      : p
+    ));
+    setSelectedId(prospectId);
     setPipelineCollapsed(false);
-    setAgents(PIPELINE_STAGES.map(a => ({ ...a })));
 
+    // Animate pipeline stages for this prospect
     const stageCount = PIPELINE_STAGES.length;
     const timers: ReturnType<typeof setTimeout>[] = [];
     for (let i = 0; i < stageCount; i++) {
       timers.push(setTimeout(() => {
-        setAgents(prev => prev.map((a, idx) => {
-          if (idx === i) return { ...a, status: "running" as const };
-          if (idx < i) return { ...a, status: "completed" as const, durationMs: 5000 + Math.random() * 5000 };
-          return a;
+        setProspects(prev => prev.map(p => p.id !== prospectId ? p : {
+          ...p,
+          agents: p.agents.map((a, idx) => {
+            if (idx === i) return { ...a, status: "running" as const };
+            if (idx < i) return { ...a, status: "completed" as const, durationMs: 5000 + Math.random() * 5000 };
+            return a;
+          }),
         }));
       }, i * 8000));
     }
 
     try {
       const input = isSales ? {
-        linkedin_url: salesForm.linkedin_url,
-        company_website: salesForm.company_website,
-        company_linkedin_url: salesForm.company_linkedin_url,
+        linkedin_url: prospect.linkedin_url,
+        company_website: prospect.company_website,
+        company_linkedin_url: prospect.company_linkedin_url,
         service_catalog: serviceTags.map(s => ({ name: s })),
-        sender_name: salesForm.sender_name,
-        sender_company: salesForm.sender_company,
-        sender_role: salesForm.sender_role,
-        value_proposition: salesForm.value_proposition,
-        target_pain_points: salesForm.target_pain_points,
-        ideal_outcome: salesForm.ideal_outcome,
-        email_tone: salesForm.email_tone,
-        case_studies: salesForm.case_studies,
-        cta_preference: salesForm.cta_preference,
+        sender_name: senderForm.sender_name,
+        sender_company: senderForm.sender_company,
+        sender_role: senderForm.sender_role,
+        value_proposition: senderForm.value_proposition,
+        target_pain_points: senderForm.target_pain_points,
+        ideal_outcome: senderForm.ideal_outcome,
+        email_tone: senderForm.email_tone,
+        case_studies: senderForm.case_studies,
+        cta_preference: senderForm.cta_preference,
       } : {};
 
       const res = await fetch(`${API}/flow/${name}/invoke`, {
@@ -958,43 +1129,98 @@ export default function FlowPage() {
       });
       const data = await res.json();
       timers.forEach(clearTimeout);
-      setAgents(prev => prev.map(a => ({
-        ...a, status: "completed" as const, durationMs: (data.duration_ms || 60000) / prev.length,
-      })));
-      setResult(data.output || {});
-      setRunMeta({ duration_ms: data.duration_ms });
-      // Collapse pipeline after a short pause so user sees "Complete" badge
+      setProspects(prev => prev.map(p => p.id !== prospectId ? p : {
+        ...p,
+        status: "completed",
+        result: data.output || {},
+        duration_ms: data.duration_ms || null,
+        agents: p.agents.map(a => ({ ...a, status: "completed" as const, durationMs: (data.duration_ms || 60000) / p.agents.length })),
+      }));
       setTimeout(() => setPipelineCollapsed(true), 1800);
     } catch {
       timers.forEach(clearTimeout);
-      setAgents(prev => prev.map(a =>
-        a.status === "running" ? { ...a, status: "failed" as const } : a
-      ));
-    } finally {
-      setRunning(false);
+      setProspects(prev => prev.map(p => p.id !== prospectId ? p : {
+        ...p,
+        status: "failed",
+        agents: p.agents.map(a => a.status === "running" ? { ...a, status: "failed" as const } : a),
+      }));
     }
-  }, [name, isSales, salesForm, serviceTags]);
+  }, [prospects, senderForm, serviceTags, isSales, name]);
 
-  const profileIsComplete = Boolean(salesForm.sender_name && salesForm.sender_company && salesForm.value_proposition);
+  // ── Run all idle/failed prospects with concurrency limit ──────────────────
+  const runAll = useCallback(async () => {
+    const targets = prospects.filter(p => p.status === "idle" || p.status === "failed");
+    if (!targets.length || runAllActive) return;
+    setRunAllActive(true);
+
+    let idx = 0;
+    let active = 0;
+
+    await new Promise<void>(resolve => {
+      const tryNext = () => {
+        while (active < CONCURRENCY && idx < targets.length) {
+          const prospect = targets[idx++];
+          active++;
+          // Stagger starts
+          const delay = (idx - 1) * STAGGER_MS;
+          setTimeout(() => {
+            runProspect(prospect.id).finally(() => {
+              active--;
+              if (idx < targets.length) tryNext();
+              else if (active === 0) resolve();
+            });
+          }, delay);
+        }
+        if (idx >= targets.length && active === 0) resolve();
+      };
+      tryNext();
+    });
+
+    setRunAllActive(false);
+  }, [prospects, runAllActive, runProspect]);
+
+  // Only name + company are required — value prop/services come from docs if synced
+  const hasKnowledgeDocs = knowledgeDocCount > 0;
+  const profileIsComplete = Boolean(senderForm.sender_name && senderForm.sender_company);
 
   return (
     <div className="flex h-[calc(100vh-56px)] overflow-hidden">
 
-      {/* ── Left Panel — collapsed strip, expands on hover ─────────────────── */}
-      <aside className="group/sidebar relative z-30 flex-shrink-0 w-12 hover:w-[420px] transition-[width] duration-300 ease-in-out bg-surface-low border-r border-outline/10 flex flex-col overflow-hidden">
+      {/* ── Left Panel — click to open/close ────────────────────────────────── */}
+      <aside className={`relative z-30 flex-shrink-0 transition-[width] duration-300 ease-in-out bg-surface-low border-r border-outline/10 flex flex-col overflow-hidden ${sidebarOpen ? "w-[420px]" : "w-12"}`}>
 
-        {/* Collapsed indicator strip */}
-        <div className="absolute left-0 top-0 bottom-0 w-12 flex flex-col items-center justify-center gap-4 group-hover/sidebar:opacity-0 transition-opacity duration-200 pointer-events-none">
-          <div className="w-1 h-16 rounded-full bg-accent/20" />
-          <svg className="w-4 h-4 text-muted/40 rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
-          <div className="w-1 h-16 rounded-full bg-accent/20" />
-        </div>
+        {/* Collapsed strip — click to open */}
+        {!sidebarOpen && (
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="absolute inset-0 w-12 flex flex-col items-center justify-center gap-4 hover:bg-surface-high/20 transition-colors"
+          >
+            <div className="w-1 h-16 rounded-full bg-accent/20" />
+            <svg className="w-4 h-4 text-muted/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+            <div className="w-1 h-16 rounded-full bg-accent/20" />
+          </button>
+        )}
 
         {/* Expanded content */}
-        <div className="opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-200 delay-100 w-[420px] flex flex-col flex-1 overflow-y-auto overflow-x-hidden">
-        <div className="px-8 pt-8 pb-6">
+        <div className={`w-[420px] flex flex-col flex-1 overflow-y-auto overflow-x-hidden transition-opacity duration-200 ${sidebarOpen ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+
+        {/* Close button */}
+        <div className="flex items-center justify-between px-8 pt-6 pb-2 shrink-0">
+          <span className="text-[0.6rem] font-black uppercase tracking-widest text-muted/40">Configuration</span>
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="w-7 h-7 flex items-center justify-center rounded-lg border border-outline/20 text-muted/50 hover:text-foreground hover:border-outline/50 transition-colors"
+            title="Collapse sidebar"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="px-8 pt-4 pb-6">
 
           {/* Saved profile identity card */}
           {profileLoaded && savedProfile && profileMode === "saved" && (
@@ -1028,30 +1254,109 @@ export default function FlowPage() {
             </div>
           )}
 
-          {/* Prospect Parameters */}
+          {/* Prospect Queue */}
           <section className="mb-6">
-            <label className="block text-[0.6rem] uppercase tracking-widest text-muted font-bold mb-4">
-              Prospect Parameters
-            </label>
-            <div className="space-y-3">
-              <CockpitInput
-                placeholder="https://linkedin.com/in/..."
-                label="LinkedIn"
-                value={salesForm.linkedin_url}
-                onChange={v => updateSales("linkedin_url", v)}
-              />
-              <CockpitInput
-                placeholder="https://company.com"
-                label="Website"
-                value={salesForm.company_website}
-                onChange={v => updateSales("company_website", v)}
-              />
-              <CockpitInput
-                placeholder="linkedin.com/company/..."
-                label="Co. LinkedIn"
-                value={salesForm.company_linkedin_url}
-                onChange={v => updateSales("company_linkedin_url", v)}
-              />
+            <div className="flex items-center justify-between mb-4">
+              <label className="block text-[0.6rem] uppercase tracking-widest text-muted font-bold">
+                Prospects <span className="text-accent/70">({prospects.length})</span>
+              </label>
+              <button
+                onClick={addProspect}
+                className="text-[0.6rem] px-2 py-1 rounded border border-accent/30 text-accent hover:bg-accent/10 transition-colors font-bold uppercase tracking-wide"
+              >
+                + Add
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {prospects.map((prospect, idx) => {
+                const isSelected = prospect.id === selectedId;
+                const statusColor =
+                  prospect.status === "completed" ? "text-secondary border-secondary/30 bg-secondary/5"
+                  : prospect.status === "running"  ? "text-accent border-accent/30 bg-accent/5"
+                  : prospect.status === "failed"   ? "text-error border-error/30 bg-error/5"
+                  : "text-muted/40 border-outline/15 bg-card/30";
+
+                return (
+                  <div
+                    key={prospect.id}
+                    onClick={() => setSelectedId(prospect.id)}
+                    className={`rounded-xl border p-3 cursor-pointer transition-all group/prospect ${
+                      isSelected ? "border-accent/40 bg-accent/5" : "border-outline/15 bg-card/30 hover:border-outline/30"
+                    }`}
+                  >
+                    {/* Row header */}
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[0.5rem] font-black text-muted/40 uppercase">#{idx + 1}</span>
+                        <span className={`text-[0.45rem] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full border ${statusColor}`}>
+                          {prospect.status === "running" ? (
+                            <span className="flex items-center gap-1">
+                              <span className="w-1 h-1 rounded-full bg-accent animate-pulse inline-block" />
+                              running
+                            </span>
+                          ) : prospect.status}
+                        </span>
+                        {prospect.duration_ms && (
+                          <span className="text-[0.45rem] font-mono text-secondary/60">{(prospect.duration_ms / 1000).toFixed(1)}s</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 opacity-0 group-hover/prospect:opacity-100 transition-opacity">
+                        {(prospect.status === "idle" || prospect.status === "failed") && (
+                          <button
+                            onClick={e => { e.stopPropagation(); runProspect(prospect.id); }}
+                            className="text-[0.5rem] px-1.5 py-0.5 rounded bg-accent/20 text-accent hover:bg-accent/30 transition-colors font-bold"
+                            title="Run this prospect"
+                          >
+                            ▶
+                          </button>
+                        )}
+                        {prospects.length > 1 && (
+                          <button
+                            onClick={e => { e.stopPropagation(); removeProspect(prospect.id); }}
+                            className="text-[0.5rem] px-1.5 py-0.5 rounded bg-error/10 text-error/70 hover:bg-error/20 transition-colors font-bold"
+                            title="Remove"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Fields — only show when selected */}
+                    {isSelected && (
+                      <div className="space-y-2 mt-2" onClick={e => e.stopPropagation()}>
+                        <CockpitInput
+                          placeholder="https://linkedin.com/in/..."
+                          label="LinkedIn"
+                          value={prospect.linkedin_url}
+                          onChange={v => updateProspect(prospect.id, "linkedin_url", v)}
+                        />
+                        <CockpitInput
+                          placeholder="https://company.com"
+                          label="Website"
+                          value={prospect.company_website}
+                          onChange={v => updateProspect(prospect.id, "company_website", v)}
+                        />
+                        <CockpitInput
+                          placeholder="linkedin.com/company/..."
+                          label="Co. LinkedIn"
+                          value={prospect.company_linkedin_url}
+                          onChange={v => updateProspect(prospect.id, "company_linkedin_url", v)}
+                        />
+                      </div>
+                    )}
+
+                    {/* Collapsed summary */}
+                    {!isSelected && prospect.linkedin_url && (
+                      <p className="text-[0.5rem] text-muted/50 truncate mt-1">{prospect.linkedin_url}</p>
+                    )}
+                    {!isSelected && !prospect.linkedin_url && (
+                      <p className="text-[0.5rem] text-muted/30 italic">No URL set</p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </section>
 
@@ -1073,98 +1378,143 @@ export default function FlowPage() {
                   )}
                 </div>
                 <div className="bg-surface-high/20 rounded-xl p-4 space-y-3">
-                  <CockpitInput placeholder="Your Name" label="Name" value={salesForm.sender_name} onChange={v => updateSales("sender_name", v)} />
-                  <CockpitInput placeholder="Your Company" label="Company" value={salesForm.sender_company} onChange={v => updateSales("sender_company", v)} />
-                  <CockpitInput placeholder="Founder / Sales / CTO" label="Role" value={salesForm.sender_role} onChange={v => updateSales("sender_role", v)} />
+                  <CockpitInput placeholder="Your Name" label="Name" value={senderForm.sender_name} onChange={v => updateSender("sender_name", v)} />
+                  <CockpitInput placeholder="Your Company" label="Company" value={senderForm.sender_company} onChange={v => updateSender("sender_company", v)} />
+                  <CockpitInput placeholder="Founder / Sales / CTO" label="Role" value={senderForm.sender_role} onChange={v => updateSender("sender_role", v)} />
                 </div>
               </section>
 
-              <section className="mb-6">
-                <label className="block text-[0.6rem] uppercase tracking-widest text-muted font-bold mb-4">
-                  Service Catalog
-                </label>
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {serviceTags.map(tag => (
-                    <ServiceTag
-                      key={tag}
-                      label={tag}
-                      selected
-                      onClick={() => removeServiceTag(tag)}
-                    />
-                  ))}
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    value={serviceInput}
-                    onChange={e => setServiceInput(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === "Enter" || e.key === ",") {
-                        e.preventDefault();
-                        addServiceTag(serviceInput);
-                      }
-                    }}
-                    placeholder="Add service, press Enter"
-                    className="flex-1 bg-surface-high/30 border-none rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted/50 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                  />
-                  <button
-                    onClick={() => addServiceTag(serviceInput)}
-                    className="px-3 py-2 rounded-lg bg-accent/20 text-accent text-xs font-bold hover:bg-accent/30 transition-colors"
-                  >
-                    +
-                  </button>
-                </div>
-              </section>
-
-              <section className="mb-6">
-                <label className="block text-[0.6rem] uppercase tracking-widest text-muted font-bold mb-4">
-                  Targeting Brief
-                </label>
-                <div className="space-y-3">
-                  <CockpitTextarea
-                    placeholder="Value proposition — what do you offer and why does it matter?"
-                    label="Value Prop"
-                    value={salesForm.value_proposition}
-                    onChange={v => updateSales("value_proposition", v)}
-                    rows={3}
-                  />
-                  <CockpitTextarea
-                    placeholder="Pain points you solve"
-                    label="Pain Points"
-                    value={salesForm.target_pain_points}
-                    onChange={v => updateSales("target_pain_points", v)}
-                    rows={2}
-                  />
-                  <CockpitTextarea
-                    placeholder="Case studies or social proof"
-                    label="Proof"
-                    value={salesForm.case_studies}
-                    onChange={v => updateSales("case_studies", v)}
-                    rows={2}
-                  />
-                  <div className="grid grid-cols-2 gap-3">
-                    <CockpitSelect
-                      label="Tone"
-                      value={salesForm.email_tone}
-                      onChange={v => updateSales("email_tone", v)}
-                      options={[
-                        { value: "professional", label: "Professional" },
-                        { value: "casual", label: "Casual" },
-                        { value: "technical", label: "Technical" },
-                        { value: "founder", label: "Founder" },
-                      ]}
-                    />
-                    <CockpitSelect
-                      label="CTA"
-                      value={salesForm.cta_preference}
-                      onChange={v => updateSales("cta_preference", v)}
-                      options={[
-                        { value: "soft", label: "Soft" },
-                        { value: "direct", label: "Direct" },
-                        { value: "question", label: "Question" },
-                      ]}
-                    />
+              {/* Service Catalog — hidden when docs cover it */}
+              {!hasKnowledgeDocs && (
+                <section className="mb-6">
+                  <label className="block text-[0.6rem] uppercase tracking-widest text-muted font-bold mb-4">
+                    Service Catalog
+                  </label>
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {serviceTags.map(tag => (
+                      <ServiceTag
+                        key={tag}
+                        label={tag}
+                        selected
+                        onClick={() => removeServiceTag(tag)}
+                      />
+                    ))}
                   </div>
+                  <div className="flex gap-2">
+                    <input
+                      value={serviceInput}
+                      onChange={e => setServiceInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter" || e.key === ",") {
+                          e.preventDefault();
+                          addServiceTag(serviceInput);
+                        }
+                      }}
+                      placeholder="Add service, press Enter"
+                      className="flex-1 bg-surface-high/30 border-none rounded-lg px-3 py-2 text-xs text-foreground placeholder:text-muted/50 focus:outline-none focus:ring-1 focus:ring-accent/30"
+                    />
+                    <button
+                      onClick={() => addServiceTag(serviceInput)}
+                      className="px-3 py-2 rounded-lg bg-accent/20 text-accent text-xs font-bold hover:bg-accent/30 transition-colors"
+                    >
+                      +
+                    </button>
+                  </div>
+                </section>
+              )}
+
+              <section className="mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <label className="block text-[0.6rem] uppercase tracking-widest text-muted font-bold">
+                    Targeting Brief
+                  </label>
+                  {hasKnowledgeDocs && (
+                    <span className="text-[0.5rem] px-2 py-0.5 rounded-full bg-secondary/15 text-secondary font-bold uppercase tracking-wide">
+                      ✓ from docs
+                    </span>
+                  )}
                 </div>
+
+                {/* If docs synced — just show tone/CTA, brief note */}
+                {hasKnowledgeDocs ? (
+                  <div className="space-y-3">
+                    <div className="rounded-lg bg-secondary/5 border border-secondary/15 px-3 py-2.5">
+                      <p className="text-[0.55rem] text-secondary/70 leading-relaxed">
+                        Services, value proposition, case studies and pain points are pulled automatically from your synced company docs.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <CockpitSelect
+                        label="Tone"
+                        value={senderForm.email_tone}
+                        onChange={v => updateSender("email_tone", v)}
+                        options={[
+                          { value: "professional", label: "Professional" },
+                          { value: "casual", label: "Casual" },
+                          { value: "technical", label: "Technical" },
+                          { value: "founder", label: "Founder" },
+                        ]}
+                      />
+                      <CockpitSelect
+                        label="CTA"
+                        value={senderForm.cta_preference}
+                        onChange={v => updateSender("cta_preference", v)}
+                        options={[
+                          { value: "soft", label: "Soft" },
+                          { value: "direct", label: "Direct" },
+                          { value: "question", label: "Question" },
+                        ]}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <CockpitTextarea
+                      placeholder="Value proposition — what do you offer and why does it matter?"
+                      label="Value Prop"
+                      value={senderForm.value_proposition}
+                      onChange={v => updateSender("value_proposition", v)}
+                      rows={3}
+                    />
+                    <CockpitTextarea
+                      placeholder="Pain points you solve"
+                      label="Pain Points"
+                      value={senderForm.target_pain_points}
+                      onChange={v => updateSender("target_pain_points", v)}
+                      rows={2}
+                    />
+                    <CockpitTextarea
+                      placeholder="Case studies or social proof"
+                      label="Proof"
+                      value={senderForm.case_studies}
+                      onChange={v => updateSender("case_studies", v)}
+                      rows={2}
+                    />
+                    <div className="grid grid-cols-2 gap-3">
+                      <CockpitSelect
+                        label="Tone"
+                        value={senderForm.email_tone}
+                        onChange={v => updateSender("email_tone", v)}
+                        options={[
+                          { value: "professional", label: "Professional" },
+                          { value: "casual", label: "Casual" },
+                          { value: "technical", label: "Technical" },
+                          { value: "founder", label: "Founder" },
+                        ]}
+                      />
+                      <CockpitSelect
+                        label="CTA"
+                        value={senderForm.cta_preference}
+                        onChange={v => updateSender("cta_preference", v)}
+                        options={[
+                          { value: "soft", label: "Soft" },
+                          { value: "direct", label: "Direct" },
+                          { value: "question", label: "Question" },
+                        ]}
+                      />
+                    </div>
+                  </div>
+                )}
               </section>
 
               {profileIsComplete && (
@@ -1179,35 +1529,151 @@ export default function FlowPage() {
           )}
         </div>
 
-        {/* Sticky Run Button */}
-        <div className="mt-auto px-8 pb-8 pt-4 border-t border-outline/10">
-          {runMeta && (
-            <div className="flex items-center justify-between mb-3 text-[0.625rem] text-muted">
-              <span className="uppercase tracking-widest">Last run</span>
-              <span className="font-bold text-secondary">{(runMeta.duration_ms / 1000).toFixed(1)}s</span>
+        {/* ── Company Knowledge ────────────────────────────────────────────── */}
+        <div className="px-8 pb-4">
+          <div className="border border-outline/15 rounded-xl overflow-hidden bg-card/40">
+            {/* Header row — always visible, toggles collapse */}
+            <button
+              onClick={() => setKnowledgeOpen(o => !o)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-surface-high/30 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <svg className="w-3.5 h-3.5 text-accent/70 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span className="text-[0.6rem] font-bold uppercase tracking-widest text-muted">Company Knowledge</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {knowledgeDocCount > 0 && (
+                  <span className="text-[0.5rem] font-bold px-1.5 py-0.5 rounded-full bg-secondary/15 text-secondary">{knowledgeDocCount} docs</span>
+                )}
+                <svg className={`w-3 h-3 text-muted/40 transition-transform duration-200 ${knowledgeOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </button>
+
+            {/* Collapsible body */}
+            {knowledgeOpen && (
+              <div className="border-t border-outline/10">
+
+                {/* File list */}
+                {knowledgeDocs.length > 0 && (
+                  <div className="px-4 pt-3 space-y-1.5">
+                    {knowledgeDocs.map(doc => {
+                      const icon = doc.mime_type.includes("pdf") ? "📕"
+                        : doc.mime_type.includes("presentation") || doc.mime_type.includes("slide") ? "📊"
+                        : doc.mime_type.includes("spreadsheet") || doc.mime_type.includes("sheet") ? "📋"
+                        : "📄";
+                      return (
+                        <div key={doc.file_id} className="flex items-center gap-2 group/kfile rounded-lg px-2 py-1.5 hover:bg-surface-high/30 transition-colors">
+                          <span className="text-[0.65rem] flex-shrink-0">{icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[0.55rem] font-medium text-foreground/80 truncate">{doc.file_name}</p>
+                            <p className="text-[0.45rem] text-muted/40">{doc.chunk_count} chunks</p>
+                          </div>
+                          <button
+                            onClick={async () => {
+                              if (!confirm(`Remove "${doc.file_name}"?`)) return;
+                              setKnowledgeDeletingId(doc.file_id);
+                              try {
+                                const res = await fetch(`${API}/knowledge/files/${doc.file_id}`, { method: "DELETE" });
+                                if (res.ok) {
+                                  setKnowledgeDocs(prev => prev.filter(d => d.file_id !== doc.file_id));
+                                  setKnowledgeDocCount(prev => Math.max(0, prev - 1));
+                                }
+                              } catch {}
+                              setKnowledgeDeletingId(null);
+                            }}
+                            disabled={knowledgeDeletingId === doc.file_id}
+                            className="flex-shrink-0 opacity-0 group-hover/kfile:opacity-100 transition-opacity w-5 h-5 flex items-center justify-center rounded text-error/50 hover:text-error hover:bg-error/10 text-[0.6rem] font-bold disabled:opacity-30"
+                            title="Remove file"
+                          >
+                            {knowledgeDeletingId === doc.file_id ? "…" : "✕"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Empty state */}
+                {knowledgeDocs.length === 0 && !knowledgeSyncing && (
+                  <p className="text-[0.55rem] text-muted/40 italic text-center py-3 px-4">
+                    No docs synced yet
+                  </p>
+                )}
+
+                {/* Add / status */}
+                <div className="px-4 pb-4 pt-3">
+                  <button
+                    onClick={openKnowledgePicker}
+                    disabled={knowledgeSyncing}
+                    className="w-full py-2 rounded-lg text-[0.625rem] font-bold uppercase tracking-widest bg-accent/15 text-accent hover:bg-accent/25 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                  >
+                    {knowledgeSyncing ? "Working..." : knowledgeDocs.length > 0 ? "+ Add More Files" : "Select Drive Files"}
+                  </button>
+                  {knowledgeMsg && (
+                    <p className={`text-[0.55rem] mt-2 text-center ${knowledgeMsg.startsWith("✓") ? "text-secondary" : "text-muted/60"}`}>
+                      {knowledgeMsg}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Sticky Run Buttons */}
+        <div className="mt-auto px-8 pb-8 pt-4 border-t border-outline/10 space-y-2">
+          {/* Progress summary */}
+          {prospects.some(p => p.status !== "idle") && (
+            <div className="flex items-center justify-between text-[0.6rem] text-muted mb-1">
+              <span className="uppercase tracking-widest">
+                {prospects.filter(p => p.status === "completed").length}/{prospects.length} done
+              </span>
+              <span className="text-secondary font-bold">
+                {prospects.filter(p => p.status === "running").length > 0
+                  ? `${prospects.filter(p => p.status === "running").length} running`
+                  : prospects.filter(p => p.status === "failed").length > 0
+                  ? `${prospects.filter(p => p.status === "failed").length} failed`
+                  : ""}
+              </span>
             </div>
           )}
+
+          {/* Run All */}
           <button
-            onClick={runFlow}
-            disabled={running}
+            onClick={runAll}
+            disabled={runAllActive || prospects.every(p => p.status === "running" || p.status === "completed")}
             className={`w-full py-3.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all active:scale-[0.98] ${
-              running
+              runAllActive
                 ? "bg-accent/20 text-accent cursor-wait"
                 : "bg-accent text-white hover:bg-accent/90 shadow-[0_0_20px_rgba(128,131,255,0.25)]"
             }`}
           >
-            {running ? (
+            {runAllActive ? (
               <span className="flex items-center justify-center gap-2">
                 <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
-                Synthesizing...
+                Running {prospects.filter(p => p.status === "running").length} / {CONCURRENCY} concurrent...
               </span>
             ) : (
-              "Run Pipeline →"
+              prospects.length === 1 ? "Run Pipeline →" : `Run All ${prospects.length} →`
             )}
           </button>
+
+          {/* Reset idle button — shown after some are done */}
+          {prospects.some(p => p.status === "completed" || p.status === "failed") && (
+            <button
+              onClick={() => setProspects(prev => prev.map(p => ({ ...p, status: "idle" as const, result: null, duration_ms: null, agents: PIPELINE_STAGES.map(a => ({ ...a })) })))}
+              className="w-full py-2 rounded-xl text-[0.6rem] font-bold uppercase tracking-widest border border-outline/20 text-muted hover:text-foreground hover:border-outline/40 transition-colors"
+            >
+              Reset All
+            </button>
+          )}
         </div>
         </div>{/* end expanded content */}
       </aside>
@@ -1215,11 +1681,40 @@ export default function FlowPage() {
       {/* ── Right Output Canvas — full remaining space ─────────────────────── */}
       <div className="flex-1 flex flex-col overflow-hidden relative">
 
+        {/* ── Prospect result tabs (shown when any prospect has a result) ── */}
+        {prospects.some(p => p.result || p.status === "running") && (
+          <div className="shrink-0 flex items-center gap-1 px-4 pt-3 pb-0 overflow-x-auto border-b border-outline/10 bg-surface-low/50">
+            {prospects
+              .filter(p => p.result || p.status === "running" || p.status === "failed")
+              .map((p, idx) => {
+                const name = (p.result as any)?.linkedin_parsed?.name
+                  || (p.result as any)?.persona?.name
+                  || p.linkedin_url.split("/in/")[1]?.replace(/\/$/, "")
+                  || `Prospect ${idx + 1}`;
+                const isSelected = p.id === selectedId;
+                const dotColor = p.status === "completed" ? "bg-secondary" : p.status === "running" ? "bg-accent animate-pulse" : "bg-error";
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => setSelectedId(p.id)}
+                    className={`shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-t-lg text-[0.6rem] font-bold uppercase tracking-wide transition-colors border-b-2 ${
+                      isSelected
+                        ? "text-foreground border-accent bg-surface-high/50"
+                        : "text-muted/50 border-transparent hover:text-muted hover:bg-surface-high/20"
+                    }`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+                    {name.length > 16 ? name.slice(0, 16) + "…" : name}
+                  </button>
+                );
+              })}
+          </div>
+        )}
+
         {/* ── Phase: idle — full-screen pipeline placeholder ── */}
-        {!running && !result && (
+        {selectedProspect?.status === "idle" && (
           <div className="flex-1 flex flex-col items-center justify-center gap-8 px-12">
-            <PipelineTimeline steps={agents} fullscreen />
-            {/* Ghost canvas hints below */}
+            <PipelineTimeline steps={selectedProspect.agents} fullscreen />
             <div className="w-full max-w-lg space-y-3 mt-2 opacity-40">
               {["Generated Email", "Persona Analysis", "Research Intelligence"].map(s => (
                 <div key={s} className="rounded-xl border border-dashed border-outline/20 p-5">
@@ -1235,16 +1730,29 @@ export default function FlowPage() {
         )}
 
         {/* ── Phase: running — full-screen pipeline ── */}
-        {running && !result && (
+        {selectedProspect?.status === "running" && !selectedProspect.result && (
           <div className="flex-1 flex flex-col items-center justify-center px-12">
-            <PipelineTimeline steps={agents} fullscreen />
+            <PipelineTimeline steps={selectedProspect.agents} fullscreen />
+          </div>
+        )}
+
+        {/* ── Phase: failed ── */}
+        {selectedProspect?.status === "failed" && !selectedProspect.result && (
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 px-12">
+            <PipelineTimeline steps={selectedProspect.agents} fullscreen />
+            <div className="text-[0.7rem] text-error/70 font-bold uppercase tracking-widest">Pipeline failed — check backend logs</div>
+            <button
+              onClick={() => runProspect(selectedProspect.id)}
+              className="px-4 py-2 rounded-lg bg-accent/20 text-accent text-xs font-bold hover:bg-accent/30 transition-colors"
+            >
+              Retry
+            </button>
           </div>
         )}
 
         {/* ── Phase: done — pipeline slides out, canvas takes over ── */}
-        {result && (
+        {selectedProspect?.result && (
           <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-            {/* Pipeline slides up and disappears */}
             <div
               className="shrink-0 overflow-hidden transition-all duration-700 ease-in-out"
               style={{
@@ -1253,22 +1761,21 @@ export default function FlowPage() {
                 transform: pipelineCollapsed ? "translateY(-100%)" : "translateY(0)",
               }}
             >
-              <PipelineTimeline steps={agents} />
+              <PipelineTimeline steps={selectedProspect.agents} />
             </div>
-            {/* Canvas expands to fill remaining space */}
             <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-              <OutputCanvas output={result} running={false} onVerify={() => setVerifyOpen(true)} />
+              <OutputCanvas output={selectedProspect.result} running={false} onVerify={() => setVerifyOpen(true)} />
             </div>
           </div>
         )}
       </div>
 
       {/* Research Verification Drawer */}
-      {result && (
+      {selectedProspect?.result && (
         <ResearchChatDrawer
           open={verifyOpen}
           onClose={() => setVerifyOpen(false)}
-          researchContext={result}
+          researchContext={selectedProspect.result}
         />
       )}
     </div>
