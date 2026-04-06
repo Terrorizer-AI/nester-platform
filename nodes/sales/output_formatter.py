@@ -12,9 +12,7 @@ import json
 import logging
 from typing import Any, Callable
 
-from langchain_openai import ChatOpenAI
-
-from config.models import get_model
+from config.models import get_model, build_chat_llm
 from core.registry import register_node
 
 logger = logging.getLogger(__name__)
@@ -126,11 +124,7 @@ def create_output_formatter(params: dict[str, Any]) -> Callable:
         company_linkedin_data = state.get("company_linkedin_data", {})
         activity_data        = state.get("activity_data", {})
 
-        llm = ChatOpenAI(
-            model=model_config.model_id,
-            temperature=0.0,
-            max_tokens=16000,
-        )
+        llm = build_chat_llm(model_config, temperature=0.0, max_tokens=16000)
 
         try:
             parsed = await _format_output(

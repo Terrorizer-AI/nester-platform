@@ -107,9 +107,9 @@ def _build_context_block(ctx: dict[str, Any]) -> str:
 
 async def _stream_answer(request: VerifyRequest):
     """Stream the LLM answer back as SSE."""
-    from langchain_openai import ChatOpenAI
+    from config.models import get_model, build_chat_llm
 
-    llm = ChatOpenAI(model="gpt-4o", temperature=0.2, streaming=True)
+    llm = build_chat_llm(get_model("research"), temperature=0.2)
 
     context_block = _build_context_block(request.research_context)
 

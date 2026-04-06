@@ -50,9 +50,9 @@ if [ ! -d frontend/node_modules ]; then
 fi
 
 # Check required keys
-openai_key=$(grep "^OPENAI_API_KEY=" .env 2>/dev/null | cut -d'=' -f2- || true)
-if [ -z "$openai_key" ] || [[ "$openai_key" == *"your_"* ]]; then
-    fail "OPENAI_API_KEY not set in .env — run ./setup.sh to configure"
+deepseek_key=$(grep "^DEEPSEEK_API_KEY=" .env 2>/dev/null | cut -d'=' -f2- || true)
+if [ -z "$deepseek_key" ] || [[ "$deepseek_key" == *"your_"* ]]; then
+    fail "DEEPSEEK_API_KEY not set in .env — run ./setup.sh to configure"
     exit 1
 fi
 ok "Configuration verified"

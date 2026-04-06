@@ -279,11 +279,13 @@ if [ ! -f .env ]; then
         cat > .env << 'ENVEOF'
 # ── Nester Agent Platform Configuration ──
 
-# --- LLM Provider ---
+# --- LLM Provider (DeepSeek for chat, OpenAI for embeddings) ---
+DEEPSEEK_API_KEY=your_deepseek_key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
 OPENAI_API_KEY=your_openai_key
-OPENAI_RESEARCH_MODEL=gpt-4o
-OPENAI_SYNTHESIS_MODEL=gpt-4o
-OPENAI_EMAIL_MODEL=gpt-4o
+OPENAI_RESEARCH_MODEL=deepseek-chat
+OPENAI_SYNTHESIS_MODEL=deepseek-chat
+OPENAI_EMAIL_MODEL=deepseek-chat
 
 # --- Web Scraping ---
 FIRECRAWL_API_KEY=your_firecrawl_key
@@ -325,25 +327,31 @@ echo -e "  ${BOLD}Nester needs a few API keys to power its sales research.${NC}"
 echo -e "  ${DIM}We'll walk through each one. Only 2 are required.${NC}"
 echo ""
 
-echo -e "  ${BOLD}${CYAN}1/4 — OpenAI${NC} ${RED}(required)${NC}"
-echo -e "  ${DIM}Powers the AI agents that research prospects and write emails.${NC}"
+echo -e "  ${BOLD}${CYAN}1/5 — DeepSeek${NC} ${RED}(required)${NC}"
+echo -e "  ${DIM}Powers all AI agents — research, persona building, email writing.${NC}"
+echo -e "  ${DIM}Get yours at: https://platform.deepseek.com/api_keys${NC}"
+ask_key "DEEPSEEK_API_KEY" "Enter your DeepSeek API key:" "required"
+echo ""
+
+echo -e "  ${BOLD}${CYAN}2/5 — OpenAI${NC} ${RED}(required for knowledge base)${NC}"
+echo -e "  ${DIM}Used only for embeddings (company knowledge search). Not for chat.${NC}"
 echo -e "  ${DIM}Get yours at: https://platform.openai.com/api-keys${NC}"
 ask_key "OPENAI_API_KEY" "Enter your OpenAI API key:" "required"
 echo ""
 
-echo -e "  ${BOLD}${CYAN}2/4 — Firecrawl${NC} ${RED}(required)${NC}"
+echo -e "  ${BOLD}${CYAN}3/5 — Firecrawl${NC} ${RED}(required)${NC}"
 echo -e "  ${DIM}Scrapes company websites for research data.${NC}"
 echo -e "  ${DIM}Get yours at: https://firecrawl.dev${NC}"
 ask_key "FIRECRAWL_API_KEY" "Enter your Firecrawl API key:" "required"
 echo ""
 
-echo -e "  ${BOLD}${CYAN}3/4 — Tavily${NC} ${YELLOW}(recommended)${NC}"
+echo -e "  ${BOLD}${CYAN}4/5 — Tavily${NC} ${YELLOW}(recommended)${NC}"
 echo -e "  ${DIM}Web search for company news, funding, and market intel.${NC}"
 echo -e "  ${DIM}Get yours at: https://tavily.com${NC}"
 ask_key "TAVILY_API_KEY" "Enter your Tavily API key:" "optional"
 echo ""
 
-echo -e "  ${BOLD}${CYAN}4/4 — Calendly${NC} ${DIM}(optional)${NC}"
+echo -e "  ${BOLD}${CYAN}5/5 — Calendly${NC} ${DIM}(optional)${NC}"
 echo -e "  ${DIM}Generates unique booking links in outreach emails.${NC}"
 echo -e "  ${DIM}Get yours at: https://calendly.com/integrations/api_webhooks${NC}"
 ask_key "CALENDLY_API_KEY" "Enter your Calendly API key:" "optional"
@@ -486,7 +494,61 @@ else
 fi
 echo ""
 
-# ── Step 9: Start Servers ────────────────────────────────────────────────────
+# ── Step 9: Install global `nester` command ──────────────────────────────────
+
+step "Installing global 'nester' command"
+
+NESTER_CMD_PATH="/usr/local/bin/nester"
+cat > /tmp/nester-cmd << CMDEOF
+#!/usr/bin/env bash
+# Nester global command — works from any directory
+NESTER_DIR="$PROJECT_DIR"
+cd "\$NESTER_DIR"
+
+case "\${1:-start}" in
+    start)   bash start.sh ;;
+    stop)    bash stop.sh ;;
+    update)  bash update.sh ;;
+    setup)   bash setup.sh ;;
+    logs)
+        case "\${2:-backend}" in
+            backend)  tail -f /tmp/nester-backend.log ;;
+            frontend) tail -f /tmp/nester-frontend.log ;;
+            linkedin) tail -f /tmp/nester-linkedin-mcp.log ;;
+            *)        tail -f /tmp/nester-backend.log ;;
+        esac ;;
+    *)
+        echo "Usage: nester [start|stop|update|logs]"
+        echo "  nester start    — Start all servers"
+        echo "  nester stop     — Stop all servers"
+        echo "  nester update   — Pull latest & restart"
+        echo "  nester logs     — Tail backend logs"
+        ;;
+esac
+CMDEOF
+
+if sudo cp /tmp/nester-cmd "$NESTER_CMD_PATH" 2>/dev/null && sudo chmod +x "$NESTER_CMD_PATH" 2>/dev/null; then
+    ok "Installed: nester command → $NESTER_CMD_PATH"
+    ok "You can now run: nester start / nester stop / nester update"
+else
+    # Fallback: install to ~/.local/bin (no sudo needed)
+    mkdir -p "$HOME/.local/bin"
+    cp /tmp/nester-cmd "$HOME/.local/bin/nester"
+    chmod +x "$HOME/.local/bin/nester"
+
+    # Add to PATH in shell rc if not already there
+    for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+        if [ -f "$rc" ] && ! grep -q 'HOME/.local/bin' "$rc" 2>/dev/null; then
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$rc"
+        fi
+    done
+    ok "Installed: nester command → ~/.local/bin/nester"
+    warn "Run: source ~/.zshrc   (to activate in this terminal)"
+fi
+
+rm -f /tmp/nester-cmd
+
+# ── Step 10: Start Servers ────────────────────────────────────────────────────
 
 step "Starting Nester"
 
@@ -508,7 +570,7 @@ echo $! > /tmp/nester-frontend.pid
 cd "$PROJECT_DIR"
 ok "Frontend starting on port 3000"
 
-# ── Step 9: Health Check ─────────────────────────────────────────────────────
+# ── Step 11: Health Check ────────────────────────────────────────────────────
 
 step "Checking everything works"
 
@@ -560,9 +622,11 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 echo -e "  ${BOLD}Open your browser:${NC}  ${CYAN}http://localhost:3000${NC}"
 echo ""
-echo -e "  ${DIM}Quick commands:${NC}"
-echo -e "    ${BOLD}./start.sh${NC}  — Start Nester (daily use)"
-echo -e "    ${BOLD}./stop.sh${NC}   — Stop all servers"
+echo -e "  ${DIM}Commands (from anywhere):${NC}"
+echo -e "    ${BOLD}nester start${NC}   — Start Nester"
+echo -e "    ${BOLD}nester stop${NC}    — Stop all servers"
+echo -e "    ${BOLD}nester update${NC}  — Pull latest changes & restart"
+echo -e "    ${BOLD}nester logs${NC}    — Tail backend logs"
 echo ""
 echo -e "  ${DIM}Logs:${NC}"
 echo -e "    Backend:  /tmp/nester-backend.log"

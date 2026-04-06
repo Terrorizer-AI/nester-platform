@@ -10,9 +10,7 @@ Uses GPT-4o-mini (research role) + LinkedIn MCP tools.
 import logging
 from typing import Any, Callable
 
-from langchain_openai import ChatOpenAI
-
-from config.models import get_model
+from config.models import get_model, build_chat_llm
 from core.errors import ErrorStrategy, retry_with_backoff, build_skip_output
 from core.registry import register_node
 from nodes.tool_agent import run_tool_agent
@@ -86,11 +84,7 @@ def create_activity_analyzer(params: dict[str, Any]) -> Callable:
                 "communication_style": "professional",
             }
 
-        llm = ChatOpenAI(
-            model=model_config.model_id,
-            temperature=model_config.temperature,
-            max_tokens=model_config.max_tokens,
-        )
+        llm = build_chat_llm(model_config)
 
         try:
             result = await retry_with_backoff(

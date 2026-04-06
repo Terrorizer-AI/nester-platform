@@ -24,10 +24,19 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 MANAGED_KEYS: list[dict[str, str]] = [
     # ── Sales Outreach Agent ──────────────────────────────────────────────────
     {
+        "key": "DEEPSEEK_API_KEY",
+        "label": "DeepSeek API Key",
+        "description": "Powers all LLM agents — research, persona building, email writing (DeepSeek)",
+        "placeholder": "sk-...",
+        "link": "https://platform.deepseek.com/api_keys",
+        "group": "Sales Outreach",
+        "required": "true",
+    },
+    {
         "key": "OPENAI_API_KEY",
         "label": "OpenAI API Key",
-        "description": "Powers all LLM agents — research, persona building, email writing",
-        "placeholder": "sk-...",
+        "description": "Used for embeddings (knowledge base, memory) — required even with DeepSeek",
+        "placeholder": "sk-proj-...",
         "link": "https://platform.openai.com/api-keys",
         "group": "Sales Outreach",
         "required": "true",
@@ -221,6 +230,17 @@ async def save_keys(payload: KeysPayload) -> dict[str, Any]:
         saved.append(key)
         logger.info("[Settings] Key saved: %s", key)
 
+    # Invalidate model registry cache so new LLM keys take effect immediately
+    _LLM_KEYS = {"OPENAI_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_RESEARCH_MODEL", "OPENAI_SYNTHESIS_MODEL", "OPENAI_EMAIL_MODEL"}
+    if set(saved) & _LLM_KEYS:
+        try:
+            from config import models as _models
+            from config.settings import get_settings
+            _models._MODEL_REGISTRY.clear()
+            get_settings.cache_clear()
+        except Exception as e:
+            logger.warning("[Settings] Could not clear model cache: %s", e)
+
     return {"saved": saved, "count": len(saved)}
 
 
@@ -237,6 +257,16 @@ async def delete_key(key: str) -> dict[str, Any]:
 
     delete_api_key(key)
     logger.info("[Settings] Key deleted: %s", key)
+
+    _LLM_KEYS = {"OPENAI_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_RESEARCH_MODEL", "OPENAI_SYNTHESIS_MODEL", "OPENAI_EMAIL_MODEL"}
+    if key in _LLM_KEYS:
+        try:
+            from config import models as _models
+            from config.settings import get_settings
+            _models._MODEL_REGISTRY.clear()
+            get_settings.cache_clear()
+        except Exception as e:
+            logger.warning("[Settings] Could not clear model cache: %s", e)
 
     env_val = os.environ.get(key, "")
     return {

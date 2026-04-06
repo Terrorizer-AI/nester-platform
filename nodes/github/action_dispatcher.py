@@ -14,9 +14,7 @@ Uses GPT-4o-mini (research role) + Slack, GitHub, Email MCP tools.
 import logging
 from typing import Any, Callable
 
-from langchain_openai import ChatOpenAI
-
-from config.models import get_model
+from config.models import get_model, build_chat_llm
 from core.errors import retry_with_backoff, build_skip_output
 from core.registry import register_node
 
@@ -55,11 +53,7 @@ def create_action_dispatcher(params: dict[str, Any]) -> Callable:
         weekly_payload = state.get("weekly_payload")
         repo = state.get("repo", "")
 
-        llm = ChatOpenAI(
-            model=model_config.model_id,
-            temperature=model_config.temperature,
-            max_tokens=model_config.max_tokens,
-        )
+        llm = build_chat_llm(model_config)
 
         dispatch_context = {
             "intelligence_report": intelligence_report,

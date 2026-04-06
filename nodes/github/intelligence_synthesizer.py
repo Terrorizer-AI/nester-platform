@@ -10,9 +10,7 @@ Uses GPT-5.4-nano (synthesis role) — no MCP tools needed.
 import logging
 from typing import Any, Callable
 
-from langchain_openai import ChatOpenAI
-
-from config.models import get_model
+from config.models import get_model, build_chat_llm
 from core.errors import retry_with_backoff
 from core.registry import register_node
 
@@ -59,11 +57,7 @@ def create_intelligence_synthesizer(params: dict[str, Any]) -> Callable:
         event_summary = state.get("event_summary", {})
         is_weekly = state.get("weekly_report", False)
 
-        llm = ChatOpenAI(
-            model=model_config.model_id,
-            temperature=model_config.temperature,
-            max_tokens=model_config.max_tokens,
-        )
+        llm = build_chat_llm(model_config)
 
         combined_data = {
             "security": {

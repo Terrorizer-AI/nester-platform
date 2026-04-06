@@ -17,9 +17,7 @@ import json
 import logging
 from typing import Any, Callable
 
-from langchain_openai import ChatOpenAI
-
-from config.models import get_model
+from config.models import get_model, build_chat_llm
 from core.errors import ErrorStrategy, retry_with_backoff
 from core.registry import register_node
 
@@ -116,11 +114,7 @@ def create_persona_builder(params: dict[str, Any]) -> Callable:
         # ── Mem0 RECALL: search for prior knowledge about this prospect ────
         prior_memories = _recall_prospect_memories(linkedin_data)
 
-        llm = ChatOpenAI(
-            model=model_config.model_id,
-            temperature=model_config.temperature,
-            max_tokens=model_config.max_tokens,
-        )
+        llm = build_chat_llm(model_config)
 
         result = await retry_with_backoff(
             _build_persona,

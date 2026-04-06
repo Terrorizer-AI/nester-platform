@@ -10,9 +10,7 @@ Uses GPT-5.4-nano (synthesis role) — no tools, LLM reasoning only.
 import logging
 from typing import Any, Callable
 
-from langchain_openai import ChatOpenAI
-
-from config.models import get_model
+from config.models import get_model, build_chat_llm
 from core.errors import retry_with_backoff
 from core.registry import register_node
 
@@ -65,11 +63,7 @@ def create_service_matcher(params: dict[str, Any]) -> Callable:
             "case_studies": state.get("case_studies", ""),
         }
 
-        llm = ChatOpenAI(
-            model=model_config.model_id,
-            temperature=model_config.temperature,
-            max_tokens=model_config.max_tokens,
-        )
+        llm = build_chat_llm(model_config)
 
         result = await retry_with_backoff(
             _match_services,

@@ -212,9 +212,9 @@ def _get_run_stats() -> str:
 
 async def _stream_memory_answer(request: ChatMemoryRequest):
     """Stream the RAG answer back as SSE."""
-    from langchain_openai import ChatOpenAI
+    from config.models import get_model, build_chat_llm
 
-    llm = ChatOpenAI(model="gpt-4o", temperature=0.2, streaming=True)
+    llm = build_chat_llm(get_model("research"), temperature=0.2)
 
     # Primary context: run history output data
     run_context = _build_run_context(request.question)
