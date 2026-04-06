@@ -285,7 +285,7 @@ export default function SettingsPage() {
 
       {/* Header */}
       <div>
-        <h1 className="text-xl font-bold text-foreground mb-1">Settings</h1>
+        <h1 className="text-xl font-bold text-foreground mb-1">API Keys</h1>
         <p className="text-sm text-foreground/40">
           Configure API keys for each agent. Keys set here override{" "}
           <code className="text-accent/70">.env</code> instantly — no restart needed.
@@ -324,7 +324,7 @@ export default function SettingsPage() {
           placeholder="Search keys by name, description, or env var..."
           autoComplete="off"
           autoCorrect="off"
-          autoCapitalize="off"
+          autoCapitalize="none"
           spellCheck={false}
           name="settings-search-nofill"
           className="w-full bg-card border border-outline/20 rounded-xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted/30 focus:outline-none focus:border-accent/40 transition-colors"
