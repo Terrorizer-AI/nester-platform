@@ -40,15 +40,13 @@ export default function Dashboard() {
   const FLOW_META: Record<string, { desc: string; agents: number; trigger: string }> = {
     sales_outreach: {
       desc: "LinkedIn prospect research to personalized cold email",
-      agents: 6,
+      agents: 8,
       trigger: "On-demand",
     },
-    github_monitor: {
-      desc: "Security alerts, PR metrics, automated actions",
-      agents: 5,
-      trigger: "Webhook + Cron",
-    },
   };
+
+  // Only show flows that are ready (github_monitor hidden until backend is ready)
+  const visibleFlows = flows.filter(f => f.name !== "github_monitor");
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-10">
@@ -63,14 +61,14 @@ export default function Dashboard() {
           value={loading ? "..." : health === "alive" ? "Online" : "Offline"}
           sub={health === "alive" ? "All systems operational" : "Check backend"}
         />
-        <MetricCard label="Active Flows" value={flows.length} sub="Deployed" />
-        <MetricCard label="Total Agents" value={11} sub="6 sales + 5 github" />
-        <MetricCard label="Models" value={2} sub="gpt-4o-mini + gpt-4o" />
+        <MetricCard label="Active Flows" value={visibleFlows.length} sub="Deployed" />
+        <MetricCard label="Total Agents" value={8} sub="Sales outreach pipeline" />
+        <MetricCard label="Model" value="GPT-4o" sub="All agents" />
       </div>
 
       <h2 className="text-lg font-semibold mb-4">Flows</h2>
       <div className="grid grid-cols-2 gap-4">
-        {flows.map((flow) => {
+        {visibleFlows.map((flow) => {
           const meta = FLOW_META[flow.name];
           return (
             <a

@@ -31,12 +31,6 @@ const AGENT_META: Record<string, {
     tagline: "AI-powered outreach pipeline",
     description: "Researches prospects, builds personalized personas, and writes multi-touch email sequences. Requires OpenAI for LLM, Tavily for web search, and Firecrawl for website scraping.",
   },
-  "GitHub Monitor": {
-    icon: "🔭",
-    color: "text-blue-400",
-    tagline: "Repo health & security watchdog",
-    description: "Monitors repositories for PRs, issues, dependency vulnerabilities, and security alerts. Posts weekly digests and real-time alerts to Slack channels.",
-  },
   "Google Drive": {
     icon: "📁",
     color: "text-yellow-400",

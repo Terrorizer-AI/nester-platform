@@ -34,7 +34,6 @@ export default function RootLayout({
               {[
                 { href: "/", label: "Dashboard" },
                 { href: "/flow/sales_outreach", label: "Outreach" },
-                { href: "/flow/github_monitor", label: "Monitor" },
                 { href: "/history", label: "History" },
                 { href: "/chat", label: "Chat" },
                 { href: "/integrations", label: "Integrations" },
