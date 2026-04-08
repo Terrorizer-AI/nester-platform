@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     deepseek_api_key: str = Field("", env="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field("https://api.deepseek.com", env="DEEPSEEK_BASE_URL")
     openai_research_model: str = Field("gpt-4o", env="OPENAI_RESEARCH_MODEL")
-    openai_synthesis_model: str = Field("gpt-4o", env="OPENAI_SYNTHESIS_MODEL")
+    openai_synthesis_model: str = Field("gpt-4.1", env="OPENAI_SYNTHESIS_MODEL")
     openai_email_model: str = Field("gpt-4o", env="OPENAI_EMAIL_MODEL")
 
     # ── Local Storage ─────────────────────────────────────────────────────────

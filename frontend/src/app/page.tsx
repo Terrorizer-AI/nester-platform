@@ -37,16 +37,26 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  const FLOW_META: Record<string, { desc: string; agents: number; trigger: string }> = {
+  const FLOW_META: Record<string, { desc: string; agents: number; trigger: string; href?: string }> = {
     sales_outreach: {
       desc: "LinkedIn prospect research to personalized cold email",
       agents: 8,
       trigger: "On-demand",
     },
+    sow_generator: {
+      desc: "Upload proposals & templates, AI generates a Statement of Work",
+      agents: 4,
+      trigger: "On-demand",
+      href: "/sow",
+    },
   };
 
   // Only show flows that are ready (github_monitor hidden until backend is ready)
   const visibleFlows = flows.filter(f => f.name !== "github_monitor");
+
+  // Append SOW as a virtual flow card (not a backend YAML flow)
+  const SOW_VIRTUAL = { name: "sow_generator", version: "1.0" };
+  const dashboardFlows = [...visibleFlows, ...(visibleFlows.some(f => f.name === "sow_generator") ? [] : [SOW_VIRTUAL])];
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-10">
@@ -61,19 +71,20 @@ export default function Dashboard() {
           value={loading ? "..." : health === "alive" ? "Online" : "Offline"}
           sub={health === "alive" ? "All systems operational" : "Check backend"}
         />
-        <MetricCard label="Active Flows" value={visibleFlows.length} sub="Deployed" />
-        <MetricCard label="Total Agents" value={8} sub="Sales outreach pipeline" />
+        <MetricCard label="Active Flows" value={dashboardFlows.length} sub="Deployed" />
+        <MetricCard label="Total Agents" value={12} sub="8 outreach + 4 SOW" />
         <MetricCard label="Model" value="GPT-4o" sub="All agents" />
       </div>
 
       <h2 className="text-lg font-semibold mb-4">Flows</h2>
       <div className="grid grid-cols-2 gap-4">
-        {visibleFlows.map((flow) => {
+        {dashboardFlows.map((flow) => {
           const meta = FLOW_META[flow.name];
+          const href = meta?.href || `/flow/${flow.name}`;
           return (
             <a
               key={flow.name}
-              href={`/flow/${flow.name}`}
+              href={href}
               className="group rounded-xl border border-card-border bg-card p-6 hover:border-accent/40 transition-all"
             >
               <div className="flex items-start justify-between mb-3">

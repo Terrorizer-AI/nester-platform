@@ -183,6 +183,42 @@ CREATE TABLE IF NOT EXISTS company_profile (
     generated_at TEXT NOT NULL,
     folder_id TEXT DEFAULT ''
 );
+
+-- SOW Generator: sessions
+CREATE TABLE IF NOT EXISTS sow_sessions (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT 'Untitled SOW',
+    status TEXT NOT NULL DEFAULT 'draft',
+    sow_markdown TEXT NOT NULL DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- SOW Generator: uploaded documents (templates global, proposals per-session)
+CREATE TABLE IF NOT EXISTS sow_documents (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    doc_type TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    raw_bytes BLOB NOT NULL,
+    extracted_text TEXT NOT NULL DEFAULT '',
+    uploaded_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sow_docs_session ON sow_documents(session_id, doc_type);
+CREATE INDEX IF NOT EXISTS idx_sow_docs_type ON sow_documents(doc_type);
+
+-- SOW Generator: chat messages per session
+CREATE TABLE IF NOT EXISTS sow_chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sow_chat_session ON sow_chat_messages(session_id, id);
 """
 
 
@@ -916,3 +952,145 @@ def delete_api_key(key: str) -> None:
     """Delete a user-set API key (falls back to .env value)."""
     with _transaction() as conn:
         conn.execute("DELETE FROM api_keys WHERE key = ?", (key,))
+
+
+# ── SOW Generator ───────────────────────────────────────────────────────────
+
+
+def create_sow_session(session_id: str, title: str = "Untitled SOW") -> None:
+    """Create a new SOW session."""
+    now = _now_iso()
+    with _transaction() as conn:
+        conn.execute(
+            "INSERT INTO sow_sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (session_id, title, now, now),
+        )
+
+
+def get_sow_session(session_id: str) -> dict[str, Any] | None:
+    """Get a SOW session by ID."""
+    conn = _get_conn()
+    row = conn.execute("SELECT * FROM sow_sessions WHERE id = ?", (session_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_sow_sessions() -> list[dict[str, Any]]:
+    """List all SOW sessions, newest first."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT id, title, status, created_at, updated_at FROM sow_sessions ORDER BY updated_at DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_sow_markdown(session_id: str, markdown: str) -> None:
+    """Update the SOW markdown content for a session."""
+    with _transaction() as conn:
+        conn.execute(
+            "UPDATE sow_sessions SET sow_markdown = ?, updated_at = ? WHERE id = ?",
+            (markdown, _now_iso(), session_id),
+        )
+
+
+def update_sow_session_title(session_id: str, title: str) -> None:
+    """Update a SOW session title."""
+    with _transaction() as conn:
+        conn.execute(
+            "UPDATE sow_sessions SET title = ?, updated_at = ? WHERE id = ?",
+            (title, _now_iso(), session_id),
+        )
+
+
+def update_sow_session_status(session_id: str, status: str) -> None:
+    """Update a SOW session status (draft/finalized)."""
+    with _transaction() as conn:
+        conn.execute(
+            "UPDATE sow_sessions SET status = ?, updated_at = ? WHERE id = ?",
+            (status, _now_iso(), session_id),
+        )
+
+
+def delete_sow_session(session_id: str) -> None:
+    """Delete a SOW session and its proposals + chat messages."""
+    with _transaction() as conn:
+        conn.execute("DELETE FROM sow_chat_messages WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM sow_documents WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM sow_sessions WHERE id = ?", (session_id,))
+
+
+# ── SOW Documents ───────────────────────────────────────────────────────────
+
+
+def save_sow_document(
+    doc_id: str,
+    session_id: str | None,
+    doc_type: str,
+    file_name: str,
+    mime_type: str,
+    raw_bytes: bytes,
+    extracted_text: str,
+) -> None:
+    """Save a SOW document (template or proposal)."""
+    with _transaction() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO sow_documents
+               (id, session_id, doc_type, file_name, mime_type, raw_bytes, extracted_text, uploaded_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (doc_id, session_id, doc_type, file_name, mime_type, raw_bytes, extracted_text, _now_iso()),
+        )
+
+
+def list_sow_documents(
+    session_id: str | None = None,
+    doc_type: str | None = None,
+) -> list[dict[str, Any]]:
+    """List SOW documents, optionally filtered by session and/or type."""
+    conn = _get_conn()
+    query = "SELECT id, session_id, doc_type, file_name, mime_type, length(raw_bytes) as size_bytes, uploaded_at FROM sow_documents WHERE 1=1"
+    params: list[Any] = []
+    if doc_type:
+        query += " AND doc_type = ?"
+        params.append(doc_type)
+    if session_id is not None:
+        query += " AND session_id = ?"
+        params.append(session_id)
+    elif doc_type == "template":
+        query += " AND session_id IS NULL"
+    query += " ORDER BY uploaded_at DESC"
+    rows = conn.execute(query, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_sow_document(doc_id: str) -> dict[str, Any] | None:
+    """Get a SOW document by ID (includes raw_bytes and extracted_text)."""
+    conn = _get_conn()
+    row = conn.execute("SELECT * FROM sow_documents WHERE id = ?", (doc_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def delete_sow_document(doc_id: str) -> None:
+    """Delete a SOW document."""
+    with _transaction() as conn:
+        conn.execute("DELETE FROM sow_documents WHERE id = ?", (doc_id,))
+
+
+# ── SOW Chat Messages ──────────────────────────────────────────────────────
+
+
+def save_sow_chat_message(session_id: str, role: str, content: str) -> None:
+    """Save a chat message for a SOW session."""
+    with _transaction() as conn:
+        conn.execute(
+            "INSERT INTO sow_chat_messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+            (session_id, role, content, _now_iso()),
+        )
+
+
+def list_sow_chat_messages(session_id: str) -> list[dict[str, Any]]:
+    """List all chat messages for a SOW session, in order."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT id, role, content, created_at FROM sow_chat_messages WHERE session_id = ? ORDER BY id",
+        (session_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
