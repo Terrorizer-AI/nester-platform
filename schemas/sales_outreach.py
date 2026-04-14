@@ -50,6 +50,8 @@ class SalesOutreachState(TypedDict, total=False):
     # ── Agent 5: Service Matcher ──────────────────────────────────────────
     service_match: dict[str, Any]
     primary_hook: str
+    ranked_hooks: list[dict[str, Any]]   # [{source, artifact, quote, confidence, recency}, ...]
+    top_service_relevance: float          # 0.0-1.0 from best service match
 
     # ── Agent 6: Email Composer ───────────────────────────────────────────
     email_drafts: list[dict[str, Any]]   # All 3 variants for user to choose from

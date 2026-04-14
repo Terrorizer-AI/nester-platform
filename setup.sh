@@ -222,6 +222,14 @@ python -m playwright install chromium --quiet 2>/dev/null || python -m playwrigh
 ok "Playwright browser ready"
 
 info "Installing Patchright browser (for LinkedIn MCP)..."
+# IMPORTANT: Preserve LinkedIn profile before reinstalling browsers
+PROFILE_BACKUP="$HOME/.linkedin-mcp/profile.backup"
+PROFILE_DIR="$HOME/.linkedin-mcp/profile"
+if [ -d "$PROFILE_DIR" ]; then
+    info "Backing up LinkedIn session..."
+    cp -r "$PROFILE_DIR" "$PROFILE_BACKUP" 2>/dev/null || true
+fi
+
 if python -m patchright install chromium 2>/dev/null; then
     ok "LinkedIn browser ready"
 else
@@ -231,6 +239,14 @@ else
     ok "LinkedIn browser ready"
 fi
 
+# Restore LinkedIn profile if it was backed up
+if [ -d "$PROFILE_BACKUP" ] && [ ! -d "$PROFILE_DIR" ]; then
+    info "Restoring LinkedIn session..."
+    cp -r "$PROFILE_BACKUP" "$PROFILE_DIR" 2>/dev/null || true
+    ok "LinkedIn session restored"
+fi
+rm -rf "$PROFILE_BACKUP" 2>/dev/null || true
+
 # ── Step 3b: LinkedIn Login ──────────────────────────────────────────────────
 
 step "LinkedIn Login (one-time)"
@@ -238,18 +254,49 @@ step "LinkedIn Login (one-time)"
 echo ""
 echo -e "  ${BOLD}Nester uses your LinkedIn session to research prospects.${NC}"
 echo -e "  ${DIM}A browser window will open — log in to LinkedIn as you normally would.${NC}"
-echo -e "  ${DIM}This only needs to be done once. Your session is saved locally.${NC}"
+echo -e "  ${DIM}Your session is saved to ~/.linkedin-mcp/profile${NC}"
+echo -e "  ${DIM}Sessions expire after 24-48 hours — you may need to re-login periodically.${NC}"
 echo ""
 
-# Check if already logged in
-if linkedin-mcp-server --status 2>/dev/null | grep -qi "logged in"; then
-    ok "Already logged into LinkedIn"
+# Check if session is valid using the official --status check
+PROFILE_DIR="$HOME/.linkedin-mcp/profile"
+COOKIES_FILE="$HOME/.linkedin-mcp/cookies.json"
+SOURCE_STATE="$HOME/.linkedin-mcp/source-state.json"
+NEEDS_LOGIN=false
+LOGIN_REASON=""
+
+if [ ! -d "$PROFILE_DIR" ] || [ ! -f "$COOKIES_FILE" ] || [ ! -f "$SOURCE_STATE" ]; then
+    NEEDS_LOGIN=true
+    LOGIN_REASON="No LinkedIn session found"
+elif ! uvx linkedin-scraper-mcp@latest --status >/dev/null 2>&1; then
+    NEEDS_LOGIN=true
+    LOGIN_REASON="LinkedIn session expired or invalid"
+    warn "$LOGIN_REASON"
 else
-    echo -ne "  ${BOLD}Press Enter to open LinkedIn login...${NC}"
-    read -r
-    linkedin-mcp-server --login --no-headless 2>/dev/null || true
+    ok "LinkedIn session is valid"
+fi
+
+# If login is needed, run the correct uvx login command
+if [ "$NEEDS_LOGIN" = true ]; then
     echo ""
-    ok "LinkedIn login complete"
+    echo -e "  ${BOLD}${CYAN}LinkedIn Login Required${NC} ${DIM}($LOGIN_REASON)${NC}"
+    echo ""
+    echo -e "  ${DIM}A browser will open. It visits a few sites first (anti-detection),${NC}"
+    echo -e "  ${DIM}then opens LinkedIn. Log in manually — you have 5 minutes.${NC}"
+    echo ""
+    echo -ne "  ${BOLD}Press Enter to open browser for LinkedIn login...${NC}"
+    read -r
+
+    # Use the CORRECT command: uvx linkedin-scraper-mcp@latest --login
+    if uvx linkedin-scraper-mcp@latest --login; then
+        if [ -f "$COOKIES_FILE" ] && [ -f "$SOURCE_STATE" ]; then
+            ok "LinkedIn login complete — session saved"
+        else
+            warn "Login may have partially failed — missing cookies or state file"
+        fi
+    else
+        warn "LinkedIn login failed — you can retry later with: uvx linkedin-scraper-mcp@latest --login"
+    fi
 fi
 
 # ── Step 4: Frontend Dependencies ────────────────────────────────────────────
@@ -348,6 +395,11 @@ case "\${1:-start}" in
     stop)    bash stop.sh ;;
     update)  bash update.sh ;;
     setup)   bash setup.sh ;;
+    linkedin-login)
+        echo "🔐 Refreshing LinkedIn Session..."
+        uvx linkedin-scraper-mcp@latest --login
+        echo "✅ LinkedIn session refreshed"
+        ;;
     logs)
         case "\${2:-backend}" in
             backend)  tail -f /tmp/nester-backend.log ;;
@@ -356,11 +408,13 @@ case "\${1:-start}" in
             *)        tail -f /tmp/nester-backend.log ;;
         esac ;;
     *)
-        echo "Usage: nester [start|stop|update|logs]"
-        echo "  nester start    — Start all servers"
-        echo "  nester stop     — Stop all servers"
-        echo "  nester update   — Pull latest & restart"
-        echo "  nester logs     — Tail backend logs"
+        echo "Usage: nester [start|stop|update|setup|linkedin-login|logs]"
+        echo "  nester start           — Start all servers"
+        echo "  nester stop            — Stop all servers"
+        echo "  nester update          — Pull latest & restart"
+        echo "  nester setup           — Run setup wizard (auto-detects session expiry)"
+        echo "  nester linkedin-login  — Refresh LinkedIn session manually"
+        echo "  nester logs            — Tail backend logs"
         ;;
 esac
 CMDEOF
@@ -397,7 +451,7 @@ echo $! > /tmp/nester-backend.pid
 ok "Backend starting on port 8000"
 
 info "Starting LinkedIn MCP server..."
-nohup linkedin-mcp-server --transport streamable-http --host 0.0.0.0 --port 8001 > /tmp/nester-linkedin-mcp.log 2>&1 &
+nohup uvx linkedin-scraper-mcp@latest --transport streamable-http --host 0.0.0.0 --port 8001 > /tmp/nester-linkedin-mcp.log 2>&1 &
 echo $! > /tmp/nester-linkedin-mcp.pid
 ok "LinkedIn MCP starting on port 8001"
 

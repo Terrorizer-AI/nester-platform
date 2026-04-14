@@ -37,12 +37,35 @@ Example of a GOOD hook: "[Company]'s [specific problem from their posts] — we 
 Example of a BAD hook: "AI-powered solutions can help improve your workflow efficiency"
 IMPORTANT: Never copy the example — generate a hook unique to THIS prospect using THEIR data.
 
+RANKED HOOKS:
+Also produce a ranked list of the best opening artifacts for the email — sorted strongest to weakest.
+Each hook must reference a SPECIFIC PUBLIC ARTIFACT (a LinkedIn post, a page on their website,
+a job listing, a company milestone, a product launch, a press release) — NOT a pain category.
+Score by: (a) how specific/verifiable it is, (b) how recent it is, (c) how directly it connects to our services.
+
+Hook sources in rough priority order (use judgment — a recent post beats an old press release):
+- prospect_post: something the prospect personally wrote or shared on LinkedIn
+- company_page: a specific page on the company website (e.g. /propel, /about, /product)
+- company_post: a post from the company LinkedIn page
+- career_move: a recent role change or promotion visible on LinkedIn
+- job_listing: an open role that signals a strategic direction
+- press_mention: a news article, funding announcement, award
+
 Return JSON:
 {
   "matches": [{"service": "...", "pain_point": "...", "relevance": 0.9, "talking_point": "...", "evidence": "..."}],
   "primary_hook": "One specific, compelling sentence that connects their pain to our solution",
   "match_confidence": 0.85,
-  "hook_reasoning": "Why this hook was chosen over others"
+  "hook_reasoning": "Why this hook was chosen over others",
+  "ranked_hooks": [
+    {
+      "source": "prospect_post | company_page | company_post | career_move | job_listing | press_mention",
+      "artifact": "the specific thing — e.g. 'post titled X', 'unitypartnerslp.com/propel', 'open VP Ops role'",
+      "quote": "3-10 word quote or description of the artifact",
+      "confidence": 0.9,
+      "recency": "2 weeks ago | 2024-Q4 | unknown"
+    }
+  ]
 }"""
 
 
@@ -77,6 +100,36 @@ def create_service_matcher(params: dict[str, Any]) -> Callable:
     return service_matcher_node
 
 
+def _extract_pain_points_query(persona: dict) -> str:
+    """Build a targeted retrieval query from the top persona pain points.
+
+    Uses the structured pain_points array from persona JSON if available.
+    Falls back to raw persona text truncated to 500 chars.
+    """
+    import json as _json
+    raw = persona.get("raw_response", "") if isinstance(persona, dict) else ""
+    if raw:
+        try:
+            parsed = _json.loads(raw) if isinstance(raw, str) else raw
+            pain_points = parsed.get("pain_points", [])
+            if isinstance(pain_points, list) and pain_points:
+                descriptions = []
+                for p in pain_points[:3]:
+                    if isinstance(p, dict):
+                        desc = p.get("description", "")
+                    else:
+                        desc = str(p)
+                    if desc:
+                        descriptions.append(desc)
+                if descriptions:
+                    return "case study solution for: " + "; ".join(descriptions)
+        except (ValueError, TypeError, AttributeError):
+            pass
+    # Fallback: raw persona text
+    fallback = raw[:500] if raw else str(persona)[:500]
+    return f"services case studies value proposition {fallback}"
+
+
 async def _match_services(
     llm: Any, persona: dict, service_catalog: list, targeting_brief: dict,
 ) -> dict[str, Any]:
@@ -86,11 +139,11 @@ async def _match_services(
     knowledge_catalog = ""
     try:
         from knowledge.retriever import get_company_context
-        persona_str = str(persona)[:500]
+        pain_query = _extract_pain_points_query(persona)
         ctx = get_company_context(
-            query=f"services products case studies value proposition pricing {persona_str}",
+            query=pain_query,
             api_key=os.environ.get("OPENAI_API_KEY", ""),
-            top_k=8,
+            top_k=10,
         )
         if ctx["has_knowledge"]:
             knowledge_text = ctx["formatted"]
@@ -153,20 +206,31 @@ async def _match_services(
 
     response = await llm.ainvoke(messages)
 
-    # Try to extract primary_hook from JSON response
+    # Parse structured fields from JSON response
     content = response.content or ""
     primary_hook = ""
+    ranked_hooks: list[dict] = []
+    top_relevance = 0.0
     try:
         import json
-        parsed = json.loads(content)
+        cleaned = content.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        parsed = json.loads(cleaned)
         if isinstance(parsed, dict):
             primary_hook = parsed.get("primary_hook", "")
-    except (json.JSONDecodeError, TypeError):
+            ranked_hooks = parsed.get("ranked_hooks", [])
+            matches = parsed.get("matches", [])
+            if matches and isinstance(matches, list):
+                top_relevance = float(matches[0].get("relevance", 0.0))
+    except (ValueError, TypeError, AttributeError):
         pass
 
     return {
         "service_match": {"raw_response": content},
         "primary_hook": primary_hook,
+        "ranked_hooks": ranked_hooks,
+        "top_service_relevance": top_relevance,
     }
 
 

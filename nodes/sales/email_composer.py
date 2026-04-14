@@ -46,6 +46,24 @@ be for anyone", you have failed.
 - No exclamation marks except possibly in the subject line
 - Short paragraphs. White space is your friend.
 
+## SHOW DON'T TELL THE PAIN (CRITICAL)
+The prospect already knows their problems. Naming their pain signals you scraped their website.
+Instead: reference a SPECIFIC PUBLIC ARTIFACT — a page, a post, a job listing, a product,
+an initiative — then let the reader connect it to their own situation.
+
+WRONG: "Companies like yours tend to have lean teams and legacy workflows"
+RIGHT: "The Propel platform caught my eye — not many funds build the shared tech layer this early in the hold period."
+
+WRONG: "Based on what I understand about Unity's direction around AI-assisted automation"
+RIGHT: "Saw you're investing in operational infrastructure pre-acquisition — that's a bet most funds don't make until post-close."
+
+WRONG: "I noticed you've been focused on scaling your engineering team"
+RIGHT: "Your post on async-first engineering last month resonated — shipping at that pace with a distributed team is a different problem than most consultancies solve."
+
+The reader should think "they get it" — not "they googled me."
+NEVER use phrases like "based on what I understand about your direction", "companies like yours",
+"I know that [role] faces challenges with", or "given your focus on X".
+
 ## Structure (200-350 words body)
 
 **Opening (1-2 sentences)**
@@ -104,6 +122,7 @@ BAD: "Let's schedule a 30-minute call at your convenience."
 3. PUSHINESS TEST: does any sentence feel like a sales pitch? → soften it
 4. AUTHENTICITY TEST: would a real human send this? Or does it sound AI-generated? → rewrite any robotic phrases
 5. SENDER TEST: does the email mention the sender's actual company and value prop from the brief? If not → rewrite
+6. ARTIFACT TEST: does every observation reference a specific public artifact (a page URL, a post topic, a job listing, a product name, a press release)? If any sentence describes a pain CATEGORY or PATTERN instead of citing a specific thing — rewrite it to cite the artifact.
 
 ## Output Format
 Return valid JSON only — an array of exactly 3 email drafts, each using a DIFFERENT opening angle:
@@ -179,6 +198,12 @@ def create_email_composer(params: dict[str, Any]) -> Callable:
             "cta_preference": state.get("cta_preference", "soft"),
         }
 
+        # Confidence + relevance signals from upstream agents
+        ranked_hooks = state.get("ranked_hooks", [])
+        top_service_relevance = state.get("top_service_relevance", 0.0)
+        persona_confidence = state.get("persona_confidence", 0.0)
+        linkedin_data_quality = state.get("linkedin_data_quality", "unknown")
+
         prior_emails = _recall_prior_emails(linkedin_data)
         calendly_link = await _get_calendly_link()
 
@@ -189,7 +214,8 @@ def create_email_composer(params: dict[str, Any]) -> Callable:
             llm, persona, service_match, primary_hook,
             communication_style, activity_data, linkedin_data,
             company_data, company_linkedin_data, targeting_brief, prior_emails,
-            calendly_link,
+            calendly_link, ranked_hooks, top_service_relevance,
+            persona_confidence, linkedin_data_quality,
             max_retries=params.get("retry", 2),
             node_name="email_composer",
         )
@@ -247,6 +273,24 @@ async def _get_calendly_link() -> str:
     return ""
 
 
+def _format_ranked_hooks(hooks: list[dict[str, Any]]) -> str:
+    """Format ranked_hooks list into a readable numbered block for the LLM prompt."""
+    if not hooks:
+        return "No ranked hooks available — use strongest signals from sections 1-4."
+    lines = []
+    for i, h in enumerate(hooks, 1):
+        confidence = h.get("confidence", 0.0)
+        source = h.get("source", "unknown")
+        artifact = h.get("artifact", "")
+        quote = h.get("quote", "")
+        recency = h.get("recency", "unknown")
+        line = f"{i}. [{source} | confidence: {confidence:.0%} | {recency}] {artifact}"
+        if quote:
+            line += f' — "{quote}"'
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _summarise(data: Any, max_chars: int = 800) -> str:
     """Convert any data (dict, list, str) to a readable string, truncated.
 
@@ -289,6 +333,10 @@ async def _compose_email(
     targeting_brief: dict,
     prior_emails: list[dict[str, Any]] | None = None,
     calendly_link: str = "",
+    ranked_hooks: list[dict[str, Any]] | None = None,
+    top_service_relevance: float = 0.0,
+    persona_confidence: float = 0.0,
+    linkedin_data_quality: str = "unknown",
 ) -> dict[str, Any]:
 
     # ── Sender context ────────────────────────────────────────────────────────
@@ -321,12 +369,11 @@ async def _compose_email(
     try:
         import os
         from knowledge.retriever import get_company_context
-        # Build query from prospect context for relevance — include industry/role for better chunk match
-        li_summary = _summarise(linkedin_data, 400)
-        persona_summary = _summarise(persona, 300)
-        prospect_ctx = f"{li_summary} {persona_summary}"
+        from nodes.sales.service_matcher import _extract_pain_points_query
+        # Use pain-point-targeted query for more relevant chunk retrieval
+        pain_query = _extract_pain_points_query(persona)
         ctx = get_company_context(
-            query=f"services products case studies client results value proposition pricing {prospect_ctx}",
+            query=pain_query,
             api_key=os.environ.get("OPENAI_API_KEY", ""),
             top_k=10,
         )
@@ -380,7 +427,20 @@ Use section 8 (company docs) as the primary source. Never fabricate.
 
 ━━━ 10. TONE & CTA PREFERENCES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Tone: {tone}
-CTA Style: {cta}"""
+CTA Style: {cta}
+
+━━━ 11. DATA CONFIDENCE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Persona confidence: {persona_confidence:.0%}
+LinkedIn data quality: {linkedin_data_quality}
+Service match relevance: {top_service_relevance:.0%}
+{"⚠️ LOW CONFIDENCE — lead with broad observations from public artifacts, avoid specific claims about the prospect's internal situation" if persona_confidence < 0.5 else "✓ HIGH CONFIDENCE — cite specific data points and artifacts directly"}
+
+━━━ 12. RANKED HOOKS (strongest → weakest signal, use these to open) ━━
+{_format_ranked_hooks(ranked_hooks or [])}
+Pick your 3 opening hooks from this ranked list. Use the STRONGEST hooks regardless
+of source type — if the top 3 are all prospect posts, use them all. Only diversify
+source types if the top hooks are roughly equal in strength.
+RULE: Every hook must reference the specific ARTIFACT listed — not a summary of the pain."""
 
     if prior_emails:
         prior_lines = [
@@ -399,12 +459,14 @@ CTA Style: {cta}"""
     user_message = (
         "Write 3 cold email variants now — each with a DIFFERENT opening angle.\n\n"
         "Step 1 — Read through ALL sections of the research context carefully.\n"
-        "Step 2 — Identify 3 distinct hooks from different parts of the research:\n"
-        "  Hook A: A recent company LinkedIn post or company milestone (section 3)\n"
-        "  Hook B: A prospect's own post or career transition (section 1)\n"
-        "  Hook C: A specific pain point, product positioning angle, or company challenge\n"
-        "  IMPORTANT: If a post is about hiring a role likely filled (>3 months ago),\n"
-        "  skip it and use the company mission/product angle instead.\n"
+        "Step 2 — Pick the 3 strongest hooks from the RANKED HOOKS list (section 12).\n"
+        "  Use the highest-confidence hooks regardless of source type.\n"
+        "  If the top 3 are all prospect posts, use them — don't force weak sources.\n"
+        "  Only use lower-ranked hooks if the top ones are too similar to open with.\n"
+        "  RULE: Each hook must reference the specific ARTIFACT from the ranked list,\n"
+        "  not a pain category or a generalisation about the prospect's situation.\n"
+        "  IMPORTANT: If a hook references a job posting that is likely filled (>3 months old),\n"
+        "  skip it and use the next ranked hook instead.\n"
         "Step 3 — For each hook, pick a DIFFERENT service line AND case study from section 8 (company knowledge).\n"
         "  Variant A must use a different case study than Variant B and C. Never repeat the same case study.\n"
         "Step 4 — Write all 3 emails following the structure in the system prompt (200-350 words each).\n"
